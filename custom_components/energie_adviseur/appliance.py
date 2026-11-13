@@ -150,7 +150,8 @@ class ApplianceManager:
         self.loads = int(stored.get("loads", 0))
         self.pending_dry = int(stored.get("pending_dry", 0))
         self.dry_program = stored.get("dry_program")
-        if stored.get("detector"):
+        # een lopende meting alleen hervatten als de manier van detecteren niet is gewijzigd
+        if stored.get("detector") and stored.get("state_mode", False) == self.detector.config.state_mode:
             self.detector.load(stored["detector"])
         self._unsub = [
             async_track_state_change_event(self.hass, [self.power_entity], self._on_power),
@@ -192,6 +193,7 @@ class ApplianceManager:
             "pending_dry": self.pending_dry,
             "dry_program": self.dry_program,
             "detector": self.detector.to_dict(),
+            "state_mode": self.detector.config.state_mode,
         }
 
     def _save(self) -> None:

@@ -720,3 +720,25 @@ async def test_state_sensor_in_flow(hass: HomeAssistant) -> None:
     assert "state_entity" not in entry.data
     assert entry.data["running_states"] == ["running"]
     assert not entry.runtime_data.detector.config.state_mode
+
+
+async def test_switching_to_state_sensor_drops_running_measurement(hass: HomeAssistant) -> None:
+    """Stand-by boven de startdrempel mag na het instellen van de statussensor geen cyclus opleveren."""
+    set_prices(hass)
+    hass.states.async_set("sensor.vw_power", "15", {"unit_of_measurement": "W"})
+    hass.states.async_set(STATE, "Ready To Start")
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    data = appliance("Vaatwasser", "dishwasher", "sensor.vw_power")
+    entry = await add(hass, data, "Vaatwasser", "sensor.vw_power")
+    manager = entry.runtime_data
+    for i in range(10):
+        manager._feed(time.time() - 3600 + i * 60, 15)
+    assert manager.detector.running  # op vermogen: 15 W ligt boven de startdrempel van 10 W
+
+    hass.config_entries.async_update_entry(entry, data=data | {"state_entity": STATE})
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    manager = entry.runtime_data
+    assert manager.detector.config.state_mode
+    assert not manager.detector.running and manager.detector.start is None
+    assert manager.cycles == []

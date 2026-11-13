@@ -380,6 +380,7 @@ class EnergieAdviseurPanel extends HTMLElement {
   /** Duur; met `exact` worden halve minuten als seconden getoond in plaats van afgerond. */
   _duration(seconds, exact = false) {
     const total = exact ? Math.round(seconds) : Math.round(seconds / 60) * 60;
+    if (exact && total < 60) return `${total} s`;
     const h = Math.floor(total / 3600);
     const m = Math.floor((total % 3600) / 60);
     const rest = total % 60 ? ` ${total % 60} s` : "";
@@ -509,7 +510,7 @@ class EnergieAdviseurPanel extends HTMLElement {
         <div class="cycle-head">
           <span class="when">${esc(this._day(cycle.start))} ${esc(this._clock(cycle.start))}–${esc(this._clock(cycle.end))}</span>
           <span class="num">${esc(this._duration(cycle.duration_s ?? cycle.end - cycle.start))}</span>
-          ${cycle.paused_s ? `<span class="num muted">${esc(t.paused(this._duration(cycle.paused_s)))}</span>` : ""}
+          ${cycle.paused_s ? `<span class="num muted">${esc(t.paused(this._duration(cycle.paused_s, true)))}</span>` : ""}
           <span class="num">${esc(this._kwh(cycle.energy_kwh))}</span>
           <span class="num muted">${esc(t.peak)} ${Math.round(cycle.peak_w)} W</span>
           <span class="badge ${cycle.program ? "named" : ""}">${esc(cycle.program || t.unknown)}</span>
