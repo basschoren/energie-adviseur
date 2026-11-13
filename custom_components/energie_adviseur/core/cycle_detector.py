@@ -16,6 +16,15 @@ class DetectorConfig:
     stop_delay_s: float = 300.0
     min_duration_s: float = 600.0
     min_energy_kwh: float = 0.03
+    # Begin en einde volgen een statussensor in plaats van het vermogen;
+    # start_delay_s is dan de tijd die de status minimaal 'running' moet blijven.
+    state_mode: bool = False
+
+
+# Wat een statussensor kan melden, teruggebracht tot wat de detector nodig heeft
+RUNNING = "running"
+PAUSED = "paused"
+OTHER = "other"
 
 
 @dataclass
@@ -28,10 +37,12 @@ class Cycle:
     program_id: str | None = None
     cycle_id: str = ""
     detail: list[float] = field(default_factory=list)  # W per blok van DETAIL_S; leeg bij cycli van voor 0.5
+    paused_s: float = 0.0  # tijd tussen start en eind waarin het apparaat gepauzeerd was; telt niet mee
 
     @property
     def duration_s(self) -> float:
-        return self.end - self.start
+        """Actieve duur: de pauzes zitten niet in de duur en niet in het verloop."""
+        return self.end - self.start - self.paused_s
 
     @property
     def step_s(self) -> int:
@@ -78,9 +89,10 @@ def _part(cycle: Cycle, first: int, stop: int) -> Cycle | None:
     if stop <= first:
         return None
     step, series = cycle.step_s, cycle.series
+    # het verloop loopt over de actieve tijd; een deel krijgt daarom geen pauze mee
     start = cycle.start + first * step
-    end = min(cycle.end, cycle.start + stop * step)
-    duration = end - start
+    duration = min(cycle.duration_s, stop * step) - first * step
+    end = start + duration
     piece = list(series[first:stop])
     wh = sum(watt * max(0.0, min(step, duration - i * step)) / 3600.0 for i, watt in enumerate(piece))
     peak = cycle.peak_w if max(piece) >= max(series) else max(piece)
@@ -160,17 +172,20 @@ class CycleDetector:
     peak_w: float = 0.0
     buckets: list[float] = field(default_factory=list)  # Wh per blok van SLOT_S
     fine: list[float] = field(default_factory=list)  # Wh per blok van DETAIL_S
+    phase: str = OTHER  # laatst gemelde status (alleen met een statussensor)
+    pause_since: float | None = None
+    paused_s: float = 0.0
 
     def update(self, ts: float, power: float | None = None) -> Cycle | None:
         """Verwerk een meting (of een tik zonder nieuwe meting).
 
         Geeft een Cycle terug op het moment dat een cyclus is afgerond.
         """
-        if self.last_ts is not None and ts > self.last_ts and self.start is not None:
-            self._integrate(self.last_ts, ts, self.last_power)
-        self.last_ts = ts
+        self._advance(ts)
         if power is not None:
             self.last_power = max(0.0, power)
+        if self.config.state_mode:
+            return self._step_state(ts)
         p = self.last_power
         cfg = self.config
 
@@ -196,6 +211,47 @@ class CycleDetector:
             return None
         return self._finish()
 
+    def update_state(self, ts: float, phase: str) -> Cycle | None:
+        """Verwerk een statuswijziging van het apparaat: RUNNING, PAUSED of OTHER."""
+        self._advance(ts)
+        self.phase = phase
+        return self._step_state(ts)
+
+    def _advance(self, ts: float) -> None:
+        """Tel het verbruik sinds de vorige aanroep mee; tijdens een pauze telt niets."""
+        if self.last_ts is not None and ts > self.last_ts and self.start is not None and self.pause_since is None:
+            self._integrate(self.last_ts, ts, self.last_power)
+        self.last_ts = ts
+
+    def _step_state(self, ts: float) -> Cycle | None:
+        """Statussensor: start na start_delay_s onafgebroken RUNNING, einde zodra de status iets anders wordt.
+
+        PAUSED (deur open) houdt de cyclus vast zonder dat de tijd doortelt.
+        """
+        if not self.running:
+            if self.phase == RUNNING:
+                if self.start is None:
+                    self._reset(start=ts)
+                self.peak_w = max(self.peak_w, self.last_power)
+                if ts - self.start >= self.config.start_delay_s:
+                    self.running = True
+            elif self.start is not None:
+                # te kort 'running' geweest, bijvoorbeeld vlak voor een uitgestelde start
+                self._reset(start=None)
+            return None
+
+        self.peak_w = max(self.peak_w, self.last_power)
+        if self.phase == RUNNING:
+            if self.pause_since is not None:
+                self.paused_s += ts - self.pause_since
+                self.pause_since = None
+            return None
+        if self.phase == PAUSED:
+            if self.pause_since is None:
+                self.pause_since = ts
+            return None
+        return self._finish_state(ts)
+
     def restored(self) -> None:
         """Aanroepen na herstart: het gat in de meting niet meetellen."""
         self.last_ts = None
@@ -208,6 +264,8 @@ class CycleDetector:
         self.start = start
         self.running = False
         self.low_since = None
+        self.pause_since = None
+        self.paused_s = 0.0
         self.wh = self.wh_at_low = self.peak_w = 0.0
         self.buckets = []
         self.fine = []
@@ -215,11 +273,12 @@ class CycleDetector:
     def _integrate(self, t0: float, t1: float, power: float) -> None:
         assert self.start is not None
         self.wh += power * (t1 - t0) / 3600.0
+        origin = self.start + self.paused_s  # pauzes schuiven het verloop op
         for buckets, size in ((self.buckets, SLOT_S), (self.fine, DETAIL_S)):
             t = t0
             while t < t1:
-                idx = int((t - self.start) // size)
-                seg_end = min(t1, self.start + (idx + 1) * size)
+                idx = int((t - origin) // size)
+                seg_end = min(t1, origin + (idx + 1) * size)
                 while len(buckets) <= idx:
                     buckets.append(0.0)
                 buckets[idx] += power * (seg_end - t) / 3600.0
@@ -236,6 +295,27 @@ class CycleDetector:
             peak_w=round(self.peak_w, 1),
             cycle_id=str(int(start)),
             detail=_to_watts(self.fine, DETAIL_S, end - start),
+        )
+        self._reset(start=None)
+        cfg = self.config
+        if cycle.duration_s < cfg.min_duration_s or cycle.energy_kwh < cfg.min_energy_kwh:
+            return None
+        return cycle
+
+    def _finish_state(self, ts: float) -> Cycle | None:
+        assert self.start is not None
+        start = self.start
+        end = self.pause_since if self.pause_since is not None else ts  # gestopt vanuit pauze: einde is het begin van de pauze
+        duration = end - start - self.paused_s
+        cycle = Cycle(
+            start=start,
+            end=end,
+            energy_kwh=round(self.wh / 1000.0, 4),
+            profile=_to_watts(self.buckets, SLOT_S, duration),
+            peak_w=round(self.peak_w, 1),
+            cycle_id=str(int(start)),
+            detail=_to_watts(self.fine, DETAIL_S, duration),
+            paused_s=round(self.paused_s, 1),
         )
         self._reset(start=None)
         cfg = self.config

@@ -41,6 +41,10 @@
           "tolerance_pct": "Tolerantie bij herkennen",
           "window_start": "Vroegste starttijd",
           "window_end": "Laatste starttijd",
+          "state_entity": "Statussensor (optioneel)",
+          "running_states": "Statussen die 'actief' betekenen",
+          "paused_states": "Statussen die 'gepauzeerd' betekenen",
+          "min_running_s": "Minimaal actief voor start",
           "dryer_entry": "Gekoppelde droger"
         },
         "data_description": {
@@ -50,6 +54,10 @@
           "stop_delay_min": "Hoe lang het vermogen onder de stopdrempel moet blijven. Kies langer dan de langste pauze binnen een programma.",
           "tolerance_pct": "Hoger herkent programma's makkelijker, maar verwart gelijkende programma's eerder.",
           "window_start": "Het advies stelt alleen starttijden voor waarop je het apparaat kunt aanzetten.",
+          "state_entity": "Voor slimme apparaten die hun toestand melden, bijvoorbeeld 'running'. Is deze ingevuld, dan bepaalt de status het begin en einde van een cyclus en gelden de vermogensdrempels niet meer. Het vermogen wordt nog wel gebruikt voor het verbruik.",
+          "running_states": "Hoofdletters maken niet uit. Typ een eigen waarde als die van jouw apparaat anders heet.",
+          "paused_states": "Bijvoorbeeld als de deur opengaat. De tijd in deze status telt niet mee in de duur van de cyclus.",
+          "min_running_s": "Zo lang moet de status onafgebroken actief zijn voordat een cyclus begint. Verandert de status eerder, bijvoorbeeld naar een uitgestelde start, dan begint er niets.",
           "dryer_entry": "Alleen voor de wasmachine: de droger die na elke was draait. Voeg de droger eerst toe."
         }
       },
@@ -117,6 +125,10 @@
           "tolerance_pct": "Tolerantie bij herkennen",
           "window_start": "Vroegste starttijd",
           "window_end": "Laatste starttijd",
+          "state_entity": "Statussensor (optioneel)",
+          "running_states": "Statussen die 'actief' betekenen",
+          "paused_states": "Statussen die 'gepauzeerd' betekenen",
+          "min_running_s": "Minimaal actief voor start",
           "dryer_entry": "Gekoppelde droger"
         },
         "data_description": {
@@ -126,6 +138,10 @@
           "stop_delay_min": "Hoe lang het vermogen onder de stopdrempel moet blijven. Kies langer dan de langste pauze binnen een programma.",
           "tolerance_pct": "Hoger herkent programma's makkelijker, maar verwart gelijkende programma's eerder.",
           "window_start": "Het advies stelt alleen starttijden voor waarop je het apparaat kunt aanzetten.",
+          "state_entity": "Voor slimme apparaten die hun toestand melden, bijvoorbeeld 'running'. Is deze ingevuld, dan bepaalt de status het begin en einde van een cyclus en gelden de vermogensdrempels niet meer. Het vermogen wordt nog wel gebruikt voor het verbruik.",
+          "running_states": "Hoofdletters maken niet uit. Typ een eigen waarde als die van jouw apparaat anders heet.",
+          "paused_states": "Bijvoorbeeld als de deur opengaat. De tijd in deze status telt niet mee in de duur van de cyclus.",
+          "min_running_s": "Zo lang moet de status onafgebroken actief zijn voordat een cyclus begint. Verandert de status eerder, bijvoorbeeld naar een uitgestelde start, dan begint er niets.",
           "dryer_entry": "Alleen voor de wasmachine: de droger die na elke was draait. Voeg de droger eerst toe."
         }
       },

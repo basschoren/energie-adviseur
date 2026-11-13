@@ -33,6 +33,10 @@ CONF_TOLERANCE = "tolerance_pct"
 CONF_WINDOW_START = "window_start"
 CONF_WINDOW_END = "window_end"
 CONF_DRYER_ENTRY = "dryer_entry"
+CONF_STATE_ENTITY = "state_entity"
+CONF_RUNNING_STATES = "running_states"
+CONF_PAUSED_STATES = "paused_states"
+CONF_MIN_RUNNING_S = "min_running_s"
 
 # verwarming
 CONF_GAS_ENTITY = "gas_entity"

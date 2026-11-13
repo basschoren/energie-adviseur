@@ -52,6 +52,9 @@ def appliance_payload(manager: ApplianceManager) -> dict[str, Any]:
                 "cycle_id": cycle.cycle_id,
                 "start": cycle.start,
                 "end": cycle.end,
+                # actieve duur; bij een apparaat met statussensor zijn pauzes hier al af
+                "duration_s": cycle.duration_s,
+                "paused_s": cycle.paused_s,
                 "energy_kwh": cycle.energy_kwh,
                 "peak_w": cycle.peak_w,
                 "program": manager.program_name(cycle.program_id),

@@ -37,6 +37,16 @@ Instellingen wijzig je later via **Configureren** bij het onderdeel.
 ### Prijssensor
 De sensor moet de prijzen van vandaag en morgen als lijst in zijn attributen hebben. Dat is zo bij onder meer Nordpool, ENTSO-e, Frank Energie, Zonneplan en de Tibber-prijssensoren uit HACS. De sensor *Huidige stroomprijs* van Energie Adviseur toont in zijn attributen hoeveel prijsblokken er zijn gevonden; staat daar 0, dan past het formaat niet.
 
+### Slim apparaat met een statussensor
+
+Meldt je apparaat zelf zijn toestand (bijvoorbeeld een vaatwasser met de statussen *Idle*, *Ready To Start*, *Running*, *Paused* en *End Of Cycle*), vul dan bij het apparaat de **Statussensor** in. De status bepaalt dan wanneer een cyclus begint en eindigt; de vermogensdrempels gelden niet meer. Het vermogen blijft nodig voor het verbruik.
+
+- **Statussen die 'actief' betekenen**: standaard `running`. Hoofdletters maken niet uit.
+- **Statussen die 'gepauzeerd' betekenen**: standaard `paused`, bijvoorbeeld als de deur opengaat. De tijd in pauze telt niet mee in de duur en het verbruik tijdens de pauze ook niet.
+- **Minimaal actief voor start**: zo lang moet de status onafgebroken actief zijn voordat een cyclus begint. Springt de status eerder naar iets anders, zoals *Delayed Start* bij een uitgestelde start, dan begint er niets.
+
+Een cyclus eindigt zodra de status iets anders wordt dan actief of gepauzeerd. Meldt de sensor even niets (*unavailable* of *unknown*), dan blijft de laatste status gelden. Historie inlezen en *Opnieuw ophalen* gebruiken ook de historie van de statussensor.
+
 ### Aftrek op teruglevering
 Dit is hoeveel een teruggeleverde kWh minder oplevert dan een afgenomen kWh kost. Bij 0 maakt het voor de kosten niet uit of je eigen zonnestroom gebruikt, en telt de zonne-forecast dus niet mee. Vul hier het werkelijke verschil in zodra je voor teruglevering minder krijgt dan je voor afname betaalt.
 

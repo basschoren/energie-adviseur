@@ -23,8 +23,12 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_APPLIANCE_TYPE,
     CONF_DRYER_ENTRY,
+    CONF_MIN_RUNNING_S,
+    CONF_PAUSED_STATES,
     CONF_POWER_ENTITY,
+    CONF_RUNNING_STATES,
     CONF_START_W,
+    CONF_STATE_ENTITY,
     CONF_STOP_DELAY,
     CONF_STOP_W,
     CONF_TOLERANCE,
@@ -38,7 +42,7 @@ from .const import (
     signal,
 )
 from .core import SLOT_S
-from .core.cycle_detector import Cycle, CycleDetector, DetectorConfig, quiet_gap, split_cycle
+from .core.cycle_detector import OTHER, PAUSED, RUNNING, Cycle, CycleDetector, DetectorConfig, quiet_gap, split_cycle
 from .core.program_matcher import Program, match, rebuild
 from .core.scheduler import Advice, ChainPlan, best_start, plan_chain
 from .market import get_market, parse_time
@@ -79,6 +83,10 @@ class ApplianceManager:
         data = entry.data
         self.appliance_type: str = data[CONF_APPLIANCE_TYPE]
         self.power_entity: str = data[CONF_POWER_ENTITY]
+        # optionele statussensor van een slim apparaat: bepaalt begin, einde en pauzes
+        self.state_entity: str | None = data.get(CONF_STATE_ENTITY) or None
+        self.running_states = {str(s).strip().casefold() for s in data.get(CONF_RUNNING_STATES) or ["running"]}
+        self.paused_states = {str(s).strip().casefold() for s in data.get(CONF_PAUSED_STATES) or ["paused"]}
         self.tolerance = float(data.get(CONF_TOLERANCE, 15)) / 100.0
         self.window = (
             parse_time(data.get(CONF_WINDOW_START), dtime(7, 0)),
@@ -108,11 +116,26 @@ class ApplianceManager:
 
     def _detector_config(self) -> DetectorConfig:
         data = self.entry.data
-        return DetectorConfig(
+        config = DetectorConfig(
             start_w=float(data.get(CONF_START_W, 10)),
             stop_w=float(data.get(CONF_STOP_W, 5)),
             stop_delay_s=float(data.get(CONF_STOP_DELAY, 5)) * 60.0,
         )
+        if self.state_entity:
+            config.state_mode = True
+            config.start_delay_s = float(data.get(CONF_MIN_RUNNING_S, 60))
+        return config
+
+    def _phase(self, value: Any) -> str | None:
+        """Vertaal de status van het apparaat; None als de sensor niets bruikbaars meldt."""
+        if value in UNAVAILABLE:
+            return None
+        text = str(value).strip().casefold()
+        if text in self.running_states:
+            return RUNNING
+        if text in self.paused_states:
+            return PAUSED
+        return OTHER
 
     # ------------------------------------------------------------ levensloop
 
@@ -134,6 +157,21 @@ class ApplianceManager:
             async_track_time_interval(self.hass, self._on_tick, TICK),
             self.hass.bus.async_listen(EVENT_CYCLE_FINISHED, self._on_other_cycle),
         ]
+        if self.state_entity:
+            self._unsub.append(async_track_state_change_event(self.hass, [self.state_entity], self._on_state))
+            # de status van nu overnemen: na een herstart komt er geen wijziging als het apparaat al draait
+            current = self.hass.states.get(self.state_entity)
+            phase = self._phase(current.state) if current else None
+            if phase is not None:
+                # ook het vermogen van nu, anders telt het verbruik pas mee vanaf de volgende meting
+                power = self.hass.states.get(self.power_entity)
+                try:
+                    watt = float(power.state) if power is not None else None
+                except ValueError:
+                    watt = None
+                if watt is not None:
+                    self.detector.last_power = watt * (1000.0 if power.attributes.get("unit_of_measurement") == "kW" else 1.0)
+                self._feed_state(time.time(), phase)
         self._refresh_advice()
         self.hass.async_create_task(self.async_replan())
 
@@ -182,6 +220,22 @@ class ApplianceManager:
         self._feed(state.last_updated.timestamp(), power)
         if self.detector.running != was_running:
             self.notify()
+
+    @callback
+    def _on_state(self, event: Event) -> None:
+        state = event.data.get("new_state")
+        phase = self._phase(state.state) if state is not None else None
+        if phase is None:
+            return  # sensor even weg: de laatste bekende status blijft gelden
+        was_running = self.detector.running
+        self._feed_state(state.last_updated.timestamp(), phase)
+        if self.detector.running != was_running:
+            self.notify()
+
+    def _feed_state(self, ts: float, phase: str) -> None:
+        cycle = self.detector.update_state(ts, phase)
+        if cycle is not None:
+            self._handle_cycle(cycle)
 
     @callback
     def _on_tick(self, now: datetime) -> None:
@@ -552,33 +606,51 @@ class ApplianceManager:
 
         if "recorder" not in self.hass.config.components:
             raise HomeAssistantError("De recorder van Home Assistant is niet actief; er is geen historie om in te lezen")
-        result = await get_instance(self.hass).async_add_executor_job(
-            partial(history.state_changes_during_period, self.hass, start, end, self.power_entity, no_attributes=True)
-        )
+        recorder = get_instance(self.hass)
+
+        async def changes(entity_id: str) -> list:
+            result = await recorder.async_add_executor_job(
+                partial(history.state_changes_during_period, self.hass, start, end, entity_id, no_attributes=True)
+            )
+            return result.get(entity_id, [])
+
         current = self.hass.states.get(self.power_entity)
         unit_kw = current is not None and current.attributes.get("unit_of_measurement") == "kW"
         detector = CycleDetector(self._detector_config())
         found: list[Cycle] = []
-        last_ts: float | None = None
-        delay = detector.config.stop_delay_s + 1
 
-        def feed(ts: float, power: float | None) -> None:
-            cycle = detector.update(ts, power)
-            if cycle is not None:
-                found.append(cycle)
-
-        for state in result.get(self.power_entity, []):
-            ts = state.last_updated.timestamp()
-            if last_ts is not None and ts - last_ts > delay:
-                feed(last_ts + delay, None)
+        # metingen en statuswijzigingen op tijd door elkaar: (tijd, vermogen, status)
+        events: list[tuple[float, float | None, str | None]] = []
+        for state in await changes(self.power_entity):
             if state.state in UNAVAILABLE:
                 continue
             try:
                 power = float(state.state) * (1000.0 if unit_kw else 1.0)
             except ValueError:
                 continue
-            feed(ts, power)
-            last_ts = ts
+            events.append((state.last_updated.timestamp(), power, None))
+        if self.state_entity:
+            for state in await changes(self.state_entity):
+                phase = self._phase(state.state)
+                if phase is not None:
+                    events.append((state.last_updated.timestamp(), None, phase))
+            events.sort(key=lambda e: e[0])
+
+        last_ts: float | None = None
+        delay = detector.config.stop_delay_s + 1
+        for ts, power, phase in events:
+            if phase is not None:
+                cycle = detector.update_state(ts, phase)
+            else:
+                if not self.state_entity and last_ts is not None and ts - last_ts > delay:
+                    # gat in de metingen: een lopende cyclus eerst laten aflopen
+                    closing = detector.update(last_ts + delay, None)
+                    if closing is not None:
+                        found.append(closing)
+                cycle = detector.update(ts, power)
+                last_ts = ts
+            if cycle is not None:
+                found.append(cycle)
         current_start = self.detector.start if self.detector.running else None
         return [c for c in found if current_start is None or c.end < current_start]
 

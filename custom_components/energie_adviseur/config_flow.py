@@ -21,6 +21,10 @@ from .const import (
     CONF_COP_7,
     CONF_COP_MINUS7,
     CONF_DRYER_ENTRY,
+    CONF_MIN_RUNNING_S,
+    CONF_PAUSED_STATES,
+    CONF_RUNNING_STATES,
+    CONF_STATE_ENTITY,
     CONF_EXPORT_DEDUCTION,
     CONF_GAS_ENTITY,
     CONF_GAS_PRICE,
@@ -54,6 +58,15 @@ def _num(minimum: float, maximum: float, step: float, unit: str | None = None) -
     if unit is not None:
         config["unit_of_measurement"] = unit
     return sel.NumberSelector(config)
+
+
+def _states(suggestions: list[str]) -> sel.SelectSelector:
+    """Lijst van statussen; eigen waarden mogen, want elk merk noemt ze anders."""
+    return sel.SelectSelector(
+        sel.SelectSelectorConfig(
+            options=suggestions, multiple=True, custom_value=True, mode=sel.SelectSelectorMode.DROPDOWN
+        )
+    )
 
 
 def _entity(domain: str | list[str], multiple: bool = False) -> sel.EntitySelector:
@@ -91,6 +104,11 @@ def appliance_schema(appliance_type: str | None, dryers: dict[str, str], with_id
             vol.Required(CONF_TOLERANCE, default=15): _num(5, 40, 1, "%"),
             vol.Required(CONF_WINDOW_START, default="07:00:00"): sel.TimeSelector(),
             vol.Required(CONF_WINDOW_END, default="22:00:00"): sel.TimeSelector(),
+            # optioneel: de statussensor van een slim apparaat bepaalt begin, einde en pauzes
+            vol.Optional(CONF_STATE_ENTITY): _entity(["sensor", "binary_sensor", "select", "input_select"]),
+            vol.Required(CONF_RUNNING_STATES, default=["running"]): _states(["running"]),
+            vol.Required(CONF_PAUSED_STATES, default=["paused"]): _states(["paused"]),
+            vol.Required(CONF_MIN_RUNNING_S, default=60): _num(0, 3600, 1, "s"),
         }
     )
     if dryers and (with_identity or appliance_type == TYPE_WASHER):

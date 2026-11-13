@@ -41,6 +41,10 @@
           "tolerance_pct": "Recognition tolerance",
           "window_start": "Earliest start",
           "window_end": "Latest start",
+          "state_entity": "State sensor (optional)",
+          "running_states": "States that mean 'running'",
+          "paused_states": "States that mean 'paused'",
+          "min_running_s": "Minimum running time before start",
           "dryer_entry": "Linked dryer"
         },
         "data_description": {
@@ -50,6 +54,10 @@
           "stop_delay_min": "How long the power must stay below the stop threshold. Make it longer than the longest pause within a programme.",
           "tolerance_pct": "Higher recognises programmes more easily but confuses similar ones sooner.",
           "window_start": "Advice only proposes start times you can actually use.",
+          "state_entity": "For smart appliances that report their state, for example 'running'. When set, the state decides when a cycle begins and ends and the power thresholds no longer apply. Power is still used for the energy use.",
+          "running_states": "Case does not matter. Type a custom value if your appliance uses a different name.",
+          "paused_states": "For example when the door is opened. Time in this state does not count towards the cycle duration.",
+          "min_running_s": "The state must stay running this long before a cycle begins. If it changes earlier, for example to a delayed start, nothing starts.",
           "dryer_entry": "Washing machine only: the dryer that runs after each wash. Add the dryer first."
         }
       },
@@ -117,6 +125,10 @@
           "tolerance_pct": "Recognition tolerance",
           "window_start": "Earliest start",
           "window_end": "Latest start",
+          "state_entity": "State sensor (optional)",
+          "running_states": "States that mean 'running'",
+          "paused_states": "States that mean 'paused'",
+          "min_running_s": "Minimum running time before start",
           "dryer_entry": "Linked dryer"
         },
         "data_description": {
@@ -126,6 +138,10 @@
           "stop_delay_min": "How long the power must stay below the stop threshold. Make it longer than the longest pause within a programme.",
           "tolerance_pct": "Higher recognises programmes more easily but confuses similar ones sooner.",
           "window_start": "Advice only proposes start times you can actually use.",
+          "state_entity": "For smart appliances that report their state, for example 'running'. When set, the state decides when a cycle begins and ends and the power thresholds no longer apply. Power is still used for the energy use.",
+          "running_states": "Case does not matter. Type a custom value if your appliance uses a different name.",
+          "paused_states": "For example when the door is opened. Time in this state does not count towards the cycle duration.",
+          "min_running_s": "The state must stay running this long before a cycle begins. If it changes earlier, for example to a delayed start, nothing starts.",
           "dryer_entry": "Washing machine only: the dryer that runs after each wash. Add the dryer first."
         }
       },

@@ -57,6 +57,7 @@ const TEXT = {
     removeYes: "Ja, verwijderen",
     removed: "Cyclus verwijderd.",
     running: "draait nu",
+    paused: (duration) => `${duration} pauze niet meegeteld`,
     peak: "piek",
   },
   en: {
@@ -109,6 +110,7 @@ const TEXT = {
     removeYes: "Yes, delete",
     removed: "Cycle deleted.",
     running: "running now",
+    paused: (duration) => `${duration} paused, not counted`,
     peak: "peak",
   },
 };
@@ -353,10 +355,11 @@ class EnergieAdviseurPanel extends HTMLElement {
     const slot = this._slot(cycle);
     if (stop <= first) return { duration: 0, kwh: 0 };
     const start = cycle.start + first * slot;
-    const end = Math.min(cycle.end, cycle.start + stop * slot);
+    const active = cycle.duration_s ?? cycle.end - cycle.start; // zonder pauzes
+    const end = Math.min(cycle.start + active, cycle.start + stop * slot);
     let wh = 0;
     for (let i = first; i < stop; i += 1) {
-      const length = Math.min(slot, cycle.end - (cycle.start + i * slot));
+      const length = Math.min(slot, active - i * slot);
       wh += (cycle.series[i] * Math.max(0, length)) / 3600;
     }
     return { duration: end - start, kwh: wh / 1000, start, end };
@@ -505,7 +508,8 @@ class EnergieAdviseurPanel extends HTMLElement {
       <section class="card" data-cycle="${esc(cycle.cycle_id)}">
         <div class="cycle-head">
           <span class="when">${esc(this._day(cycle.start))} ${esc(this._clock(cycle.start))}–${esc(this._clock(cycle.end))}</span>
-          <span class="num">${esc(this._duration(cycle.end - cycle.start))}</span>
+          <span class="num">${esc(this._duration(cycle.duration_s ?? cycle.end - cycle.start))}</span>
+          ${cycle.paused_s ? `<span class="num muted">${esc(t.paused(this._duration(cycle.paused_s)))}</span>` : ""}
           <span class="num">${esc(this._kwh(cycle.energy_kwh))}</span>
           <span class="num muted">${esc(t.peak)} ${Math.round(cycle.peak_w)} W</span>
           <span class="badge ${cycle.program ? "named" : ""}">${esc(cycle.program || t.unknown)}</span>

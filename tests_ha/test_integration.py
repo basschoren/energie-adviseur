@@ -603,3 +603,120 @@ async def test_page_service_calls(hass: HomeAssistant, hass_ws_client) -> None:
     assert not answer["success"]
     assert "recorder" in answer["error"]["message"]
 
+
+STATE = "sensor.dishwasher_appliance_state"
+
+
+async def test_state_sensor_controls_cycle(hass: HomeAssistant, freezer) -> None:
+    """Slimme vaatwasser: de statussensor bepaalt begin, einde en pauzes; hoofdletters maken niet uit."""
+    set_prices(hass)
+    hass.states.async_set("sensor.vw_power", "2", {"unit_of_measurement": "W"})
+    hass.states.async_set(STATE, "Idle")
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    entry = await add(
+        hass,
+        appliance("Vaatwasser", "dishwasher", "sensor.vw_power", state_entity=STATE, min_running_s=60),
+        "Vaatwasser",
+        "sensor.vw_power",
+    )
+    manager = entry.runtime_data
+    status = entity(hass, entry, "status")
+
+    async def step(state: str, watt: int, minutes: float) -> None:
+        hass.states.async_set(STATE, state)
+        hass.states.async_set("sensor.vw_power", str(watt), {"unit_of_measurement": "W"})
+        await hass.async_block_till_done()
+        for _ in range(int(minutes * 2)):
+            freezer.tick(30)
+            manager._on_tick(dt_util.utcnow())
+        await hass.async_block_till_done()
+
+    # idle -> ready to start -> running (kort) -> delayed start: er start niets, ook al is er vermogen
+    await step("Ready to start", 30, 1)
+    await step("Running", 30, 0.5)
+    assert hass.states.get(status).state == "idle"
+    await step("Delayed start", 30, 20)
+    assert hass.states.get(status).state == "idle"
+    assert manager.detector.start is None
+
+    # nu echt: running, deur open (paused), verder, einde
+    await step("Running", 1800, 20)
+    assert hass.states.get(status).state == "running"
+    await step("Paused", 4, 10)
+    assert hass.states.get(status).state == "running"
+    await step("Running", 900, 30)
+    await step("End of cycle", 3, 1)
+    assert hass.states.get(status).state == "idle"
+    await step("Idle", 2, 1)
+
+    assert len(manager.cycles) == 1
+    cycle = manager.last_cycle
+    assert cycle.duration_s == pytest.approx(50 * 60, abs=1)
+    assert cycle.paused_s == pytest.approx(10 * 60, abs=1)
+    assert cycle.energy_kwh == pytest.approx(0.6 + 0.45, abs=0.02)
+    assert hass.states.get(entity(hass, entry, "last_program")).attributes["onbekende_cycli"][0]["duur"] == "50 min"
+
+    # de sensor valt even weg tijdens een cyclus: die loopt gewoon door
+    await step("Running", 1500, 15)
+    hass.states.async_set(STATE, "unavailable")
+    await hass.async_block_till_done()
+    assert manager.detector.running
+    await step("Running", 1500, 5)
+    await step("Idle", 2, 1)
+    assert len(manager.cycles) == 2
+    assert manager.last_cycle.duration_s == pytest.approx(20 * 60, abs=1)
+
+
+async def test_state_sensor_running_at_startup(hass: HomeAssistant, freezer) -> None:
+    set_prices(hass)
+    hass.states.async_set("sensor.vw_power", "1500", {"unit_of_measurement": "W"})
+    hass.states.async_set(STATE, "running")
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    entry = await add(
+        hass,
+        appliance("Vaatwasser", "dishwasher", "sensor.vw_power", state_entity=STATE, min_running_s=0, running_states=["RUNNING"]),
+        "Vaatwasser",
+        "sensor.vw_power",
+    )
+    manager = entry.runtime_data
+    assert manager.detector.running
+    for _ in range(40):
+        freezer.tick(30)
+        manager._on_tick(dt_util.utcnow())
+    hass.states.async_set(STATE, "End of cycle")
+    await hass.async_block_till_done()
+    assert manager.last_cycle.duration_s == pytest.approx(20 * 60, abs=1)
+
+
+async def test_state_sensor_in_flow(hass: HomeAssistant) -> None:
+    set_prices(hass)
+    hass.states.async_set("sensor.vw_power", "0", {"unit_of_measurement": "W"})
+    hass.states.async_set(STATE, "Idle")
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "appliance"})
+    keys = {str(key) for key in result["data_schema"].schema}
+    assert {"state_entity", "running_states", "paused_states", "min_running_s"} <= keys
+    data = {k: v for k, v in appliance("Vaatwasser", "dishwasher", "sensor.vw_power").items() if k != "kind"}
+    result = await hass.config_entries.flow.async_configure(
+        result["flow_id"],
+        data | {"state_entity": STATE, "running_states": ["running", "Rinsing"], "paused_states": ["paused"], "min_running_s": 45},
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    entry = result["result"]
+    manager = entry.runtime_data
+    assert manager.state_entity == STATE
+    assert manager.running_states == {"running", "rinsing"}
+    assert manager.detector.config.state_mode and manager.detector.config.start_delay_s == 45
+
+    # zonder de optie ingevuld krijgt een apparaat de standaardwaarden en blijft het op vermogen werken
+    assert entry.data["min_running_s"] == 45
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    changed = {k: v for k, v in data.items() if k not in ("name", "appliance_type")}
+    result = await hass.config_entries.options.async_configure(result["flow_id"], changed)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert "state_entity" not in entry.data
+    assert entry.data["running_states"] == ["running"]
+    assert not entry.runtime_data.detector.config.state_mode

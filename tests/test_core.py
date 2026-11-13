@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energie_adviseur"))
 
 from core import DETAIL_S, SLOT_S  # noqa: E402
-from core.cycle_detector import CycleDetector, quiet_gap, split_cycle  # noqa: E402
+from core.cycle_detector import OTHER, PAUSED, RUNNING, CycleDetector, DetectorConfig, quiet_gap, split_cycle  # noqa: E402
 from core.heating_model import DayRecord, cop_at, fit, hourly_advice, implied_cop  # noqa: E402
 from core.price import parse_intervals, price_scale  # noqa: E402
 from core.program_matcher import Program, match, rebuild  # noqa: E402
@@ -383,6 +383,117 @@ class SplitTest(unittest.TestCase):
         self.assertIsNone(match(self.merged(), programs).program)
         self.assertEqual(match(a, programs).program.name, "Katoen 40")
         self.assertEqual(match(b, programs).program.name, "Katoen 40")
+
+
+def run_states(detector, script, t=T0, step=10):
+    """script: [(seconden, status, watt)]. Meldt elke status eenmaal en daarna elke `step` s het vermogen."""
+    cycles = []
+    for seconds, phase, watt in script:
+        c = detector.update_state(t, phase)
+        if c:
+            cycles.append(c)
+        for _ in range(int(seconds / step)):
+            c = detector.update(t, watt)
+            if c:
+                cycles.append(c)
+            t += step
+    c = detector.update_state(t, OTHER)
+    if c:
+        cycles.append(c)
+    return cycles, t
+
+
+class StateSensorTest(unittest.TestCase):
+    """Een slim apparaat meldt zelf wanneer het draait: idle, ready to start, running, paused, end of cycle."""
+
+    def detector(self, min_running=60):
+        return CycleDetector(DetectorConfig(state_mode=True, start_delay_s=min_running))
+
+    def test_cycle_follows_state_not_power(self):
+        # voor en na de cyclus trekt het apparaat ook stroom; alleen 'running' telt
+        cycles, _ = run_states(
+            self.detector(),
+            [(600, OTHER, 40), (1800, RUNNING, 1800), (1800, RUNNING, 3), (900, RUNNING, 1500), (600, OTHER, 40)],
+        )
+        self.assertEqual(len(cycles), 1)
+        cycle = cycles[0]
+        self.assertEqual(cycle.start, T0 + 600)
+        self.assertEqual(cycle.duration_s, 4500)  # ook de 30 minuten op 3 W horen erbij
+        self.assertAlmostEqual(cycle.energy_kwh, 0.9 + 0.0015 + 0.375, delta=0.01)
+        self.assertEqual(cycle.paused_s, 0)
+
+    def test_short_running_before_delayed_start_does_not_start(self):
+        # idle -> ready to start -> running (kort) -> delayed start -> running
+        detector = self.detector(min_running=60)
+        cycles, _ = run_states(
+            detector,
+            [(60, OTHER, 2), (20, RUNNING, 2), (3600, OTHER, 2), (2400, RUNNING, 1500), (300, OTHER, 2)],
+        )
+        self.assertEqual(len(cycles), 1)
+        self.assertEqual(cycles[0].start, T0 + 60 + 20 + 3600)
+        self.assertEqual(cycles[0].duration_s, 2400)
+
+    def test_running_shorter_than_minimum_is_no_cycle(self):
+        detector = self.detector(min_running=120)
+        cycles, _ = run_states(detector, [(100, RUNNING, 1500), (600, OTHER, 2)])
+        self.assertEqual(cycles, [])
+        self.assertFalse(detector.running)
+        self.assertIsNone(detector.start)
+
+    def test_becomes_running_only_after_minimum(self):
+        detector = self.detector(min_running=60)
+        detector.update_state(T0, RUNNING)
+        detector.update(T0 + 50, 1500)
+        self.assertFalse(detector.running)
+        detector.update(T0 + 60, 1500)
+        self.assertTrue(detector.running)
+
+    def test_pause_is_not_counted(self):
+        # running -> paused (deur open, 10 minuten) -> running -> end of cycle
+        cycles, end = run_states(
+            self.detector(),
+            [(1200, RUNNING, 1800), (600, PAUSED, 5), (1800, RUNNING, 900)],
+        )
+        cycle = cycles[0]
+        self.assertEqual(cycle.paused_s, 600)
+        self.assertEqual(cycle.duration_s, 3000)
+        self.assertEqual(cycle.end, end)
+        self.assertEqual(cycle.end - cycle.start, 3600)
+        # het verbruik tijdens de pauze telt niet mee en het verloop sluit aan
+        self.assertAlmostEqual(cycle.energy_kwh, 0.6 + 0.45, delta=0.01)
+        self.assertEqual(len(cycle.detail), 100)
+        self.assertEqual(len(cycle.profile), 10)
+        self.assertEqual(cycle.detail[39], 1800)
+        self.assertEqual(cycle.detail[41], 900)
+        self.assertNotIn(5, cycle.detail)
+
+    def test_stopped_while_paused_ends_at_pause(self):
+        cycles, _ = run_states(self.detector(), [(1800, RUNNING, 1500), (900, PAUSED, 5), (60, OTHER, 2)])
+        cycle = cycles[0]
+        self.assertEqual(cycle.end, T0 + 1800)
+        self.assertEqual(cycle.duration_s, 1800)
+        self.assertEqual(cycle.paused_s, 0)
+
+    def test_state_survives_restart_during_pause(self):
+        first = self.detector()
+        first.update_state(T0, RUNNING)
+        for i in range(1, 121):
+            first.update(T0 + i * 10, 1500)
+        first.update_state(T0 + 1200, PAUSED)
+        second = self.detector()
+        second.load(first.to_dict())
+        second.update_state(T0 + 1500, RUNNING)
+        for i in range(1, 121):
+            second.update(T0 + 1500 + i * 10, 1500)
+        cycle = second.update_state(T0 + 2700, OTHER)
+        self.assertEqual(cycle.paused_s, 300)
+        self.assertEqual(cycle.duration_s, 2400)
+
+    def test_split_cycle_with_pause(self):
+        cycles, _ = run_states(self.detector(), [(1200, RUNNING, 1800), (600, PAUSED, 5), (1800, RUNNING, 900)])
+        a, b = split_cycle(cycles[0], at_s=1200)
+        self.assertEqual((a.duration_s, b.duration_s), (1200, 1800))
+        self.assertAlmostEqual(a.energy_kwh + b.energy_kwh, cycles[0].energy_kwh, delta=0.001)
 
 
 if __name__ == "__main__":

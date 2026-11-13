@@ -132,3 +132,29 @@ async def test_restore_cycle_from_recorder(hass: HomeAssistant, freezer) -> None
     await manager.async_restore_cycle(manager.cycles[1].cycle_id, from_history=True)
     assert len(manager.cycles) == 1 and manager.originals == []
     assert manager.cycles[0].duration_s == pytest.approx(40 * 60, abs=60)
+
+
+async def test_import_history_with_state_sensor(hass: HomeAssistant, freezer) -> None:
+    """Historie inlezen gebruikt ook de historie van de statussensor, inclusief de pauze."""
+    set_prices(hass)
+    state_entity = "sensor.dishwasher_appliance_state"
+    script = [("Idle", 2, 5), ("Running", 1800, 20), ("Paused", 4, 10), ("Running", 900, 20), ("End of cycle", 3, 2), ("Idle", 2, 5)]
+    for state, watt, minutes in script:
+        hass.states.async_set(state_entity, state)
+        for minute in range(minutes):
+            hass.states.async_set("sensor.vw_power", str(watt + minute % 2), {"unit_of_measurement": "W"})
+            freezer.tick(60)
+    await async_wait_recording_done(hass)
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    entry = await add(
+        hass,
+        appliance("Vaatwasser", "dishwasher", "sensor.vw_power", state_entity=state_entity, min_running_s=60),
+        "Vaatwasser",
+        "sensor.vw_power",
+    )
+    manager = entry.runtime_data
+    assert await manager.async_import_history(1) == 1
+    cycle = manager.cycles[0]
+    assert cycle.duration_s == pytest.approx(40 * 60, abs=1)
+    assert cycle.paused_s == pytest.approx(10 * 60, abs=1)
+    assert cycle.energy_kwh == pytest.approx(0.6 + 0.3, abs=0.02)
