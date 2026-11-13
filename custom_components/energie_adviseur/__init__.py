@@ -49,6 +49,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def delete_program(call: ServiceCall) -> None:
         _manager(hass, call.data["appliance"], ApplianceManager).delete_program(call.data["program"])
 
+    async def split_cycle(call: ServiceCall) -> ServiceResponse:
+        manager = _manager(hass, call.data["appliance"], ApplianceManager)
+        parts = manager.split_cycle(call.data.get("cycle_id"), call.data.get("minutes"), call.data["keep"])
+        return {"cycles": parts}
+
     async def import_history(call: ServiceCall) -> ServiceResponse:
         manager = _manager(hass, call.data["entry"], (ApplianceManager, HeatingManager))
         return {"imported": await manager.async_import_history(call.data["days"])}
@@ -76,6 +81,20 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.services.async_register(
         DOMAIN, "delete_program", delete_program, vol.Schema({**appliance, vol.Required("program"): cv.string})
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "split_cycle",
+        split_cycle,
+        vol.Schema(
+            {
+                **appliance,
+                vol.Optional("cycle_id"): cv.string,
+                vol.Optional("minutes"): vol.All(vol.Coerce(float), vol.Range(min=1, max=1440)),
+                vol.Optional("keep", default="both"): vol.In(["both", "first", "second"]),
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
     )
     hass.services.async_register(
         DOMAIN,

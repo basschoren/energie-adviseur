@@ -48,6 +48,25 @@ Dit is hoeveel een teruggeleverde kWh minder oplevert dan een afgenomen kWh kost
 
 Eerdere cycli inlezen kan met de dienst `energie_adviseur.import_history` (standaard de laatste 10 dagen; verder terug bewaart Home Assistant de ruwe metingen meestal niet). Onbekende cycli staan als attribuut bij de sensor *Laatste programma*; benoem er één per programma met `energie_adviseur.label_cycle` en de rest wordt automatisch meegenomen.
 
+### Cycli splitsen
+
+Soms telt de integratie twee beurten als één cyclus, bijvoorbeeld als je direct na elkaar wast of als het apparaat na afloop blijft nadraaien (kreukbeveiliging). Bij elke onbekende cyclus staat daarom een `rustigste_periode`: het moment midden in de cyclus waarop het verbruik het laagst was.
+
+Met de dienst `energie_adviseur.split_cycle` haal je zo'n cyclus uit elkaar:
+
+```yaml
+action: energie_adviseur.split_cycle
+data:
+  appliance: Wasmachine
+  cycle_id: "1794127739"
+```
+
+- Zonder `minutes` wordt geknipt op de rustigste periode; die periode zelf vervalt.
+- Met `minutes` knip je op een zelf gekozen aantal minuten na de start.
+- Met `keep: first` of `keep: second` bewaar je maar één deel, bijvoorbeeld om het nadraaien weg te gooien.
+
+De delen worden daarna meteen vergeleken met de programma's die je al hebt geleerd. Bij `appliance` mag je de naam van het apparaat invullen.
+
 Wordt een programma niet herkend of verward met een ander, pas dan de *Tolerantie bij herkennen* aan. Programma's met sterk wisselende duur, zoals sensor-drogen, kun je het best per belading een eigen naam geven.
 
 ## Advies gebruiken

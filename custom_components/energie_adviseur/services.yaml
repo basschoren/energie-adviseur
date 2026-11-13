@@ -38,6 +38,32 @@ delete_program:
       required: true
       selector:
         text:
+split_cycle:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    cycle_id:
+      selector:
+        text:
+    minutes:
+      selector:
+        number:
+          min: 1
+          max: 1440
+          unit_of_measurement: min
+          mode: box
+    keep:
+      default: both
+      selector:
+        select:
+          translation_key: split_keep
+          options:
+            - both
+            - first
+            - second
 import_history:
   fields:
     entry:

@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energie_adviseur"))
 
 from core import SLOT_S  # noqa: E402
-from core.cycle_detector import CycleDetector  # noqa: E402
+from core.cycle_detector import CycleDetector, quiet_gap, split_cycle  # noqa: E402
 from core.heating_model import DayRecord, cop_at, fit, hourly_advice, implied_cop  # noqa: E402
 from core.price import parse_intervals, price_scale  # noqa: E402
 from core.program_matcher import Program, match, rebuild  # noqa: E402
@@ -307,6 +307,53 @@ class HeatingTest(unittest.TestCase):
         self.assertFalse(pricey.airco_cheaper)
         self.assertGreater(cheap.saving, 0)
         self.assertEqual(pricey.saving, 0)
+
+
+class SplitTest(unittest.TestCase):
+    """Twee beurten die als één cyclus zijn geteld, weer uit elkaar halen."""
+
+    def merged(self):
+        # 20 minuten stand-by van 8 W (boven de stopdrempel) tussen twee wasbeurten
+        segments = [(15, 2000), (40, 150), (30, 300), (10, 500), (20, 8), (15, 2000), (40, 150), (30, 300), (10, 500)]
+        cycles, _ = run(CycleDetector(), segments + IDLE)
+        self.assertEqual(len(cycles), 1)
+        return cycles[0]
+
+    def test_quiet_gap_is_the_standby_period(self):
+        first, blocks = quiet_gap(self.merged())
+        self.assertEqual(first * SLOT_S, 95 * 60)
+        self.assertEqual(blocks * SLOT_S, 20 * 60)
+
+    def test_split_at_quiet_gap(self):
+        cycle = self.merged()
+        a, b = split_cycle(cycle)
+        self.assertAlmostEqual(a.duration_s, 95 * 60, delta=1)
+        self.assertAlmostEqual(b.duration_s, 95 * 60, delta=SLOT_S)
+        self.assertAlmostEqual(a.energy_kwh, b.energy_kwh, delta=0.02)
+        self.assertAlmostEqual(a.energy_kwh + b.energy_kwh, cycle.energy_kwh, delta=0.01)
+        self.assertEqual(a.start, cycle.start)
+        self.assertAlmostEqual(b.end, cycle.end, delta=1)
+        self.assertNotEqual(a.cycle_id, b.cycle_id)
+
+    def test_split_at_given_moment(self):
+        cycle = self.merged()
+        a, b = split_cycle(cycle, at_s=100 * 60)
+        self.assertEqual(a.duration_s, 100 * 60)
+        self.assertEqual(b.start, cycle.start + 100 * 60)
+        self.assertAlmostEqual(a.energy_kwh + b.energy_kwh, cycle.energy_kwh, delta=0.001)
+
+    def test_split_outside_cycle_fails(self):
+        cycle = self.merged()
+        for at in (0, cycle.duration_s + SLOT_S):
+            with self.assertRaises(ValueError):
+                split_cycle(cycle, at_s=at)
+
+    def test_split_parts_match_learned_program(self):
+        programs = [learned("Katoen 40", [(15, 2000), (40, 150), (30, 300), (10, 500)])]
+        a, b = split_cycle(self.merged())
+        self.assertIsNone(match(self.merged(), programs).program)
+        self.assertEqual(match(a, programs).program.name, "Katoen 40")
+        self.assertEqual(match(b, programs).program.name, "Katoen 40")
 
 
 if __name__ == "__main__":

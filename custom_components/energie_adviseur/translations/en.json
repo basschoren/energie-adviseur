@@ -162,6 +162,13 @@
         "dishwasher": "Dishwasher",
         "other": "Other"
       }
+    },
+    "split_keep": {
+      "options": {
+        "both": "Both parts",
+        "first": "Only the first part",
+        "second": "Only the second part"
+      }
     }
   },
   "entity": {
@@ -299,6 +306,28 @@
         "program": {
           "name": "Programme",
           "description": "Programme name."
+        }
+      }
+    },
+    "split_cycle": {
+      "name": "Split cycle",
+      "description": "Split a cycle in two, for example when two runs were counted as one.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance."
+        },
+        "cycle_id": {
+          "name": "Cycle",
+          "description": "Cycle id; empty means the last cycle."
+        },
+        "minutes": {
+          "name": "Split after",
+          "description": "Minutes after the start of the cycle; empty splits at the quietest period."
+        },
+        "keep": {
+          "name": "Keep",
+          "description": "Which part to keep."
         }
       }
     },

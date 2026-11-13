@@ -40,6 +40,70 @@ class Cycle:
         return cls(**data)
 
 
+def _part(cycle: Cycle, first: int, stop: int) -> Cycle | None:
+    """Het deel van een cyclus dat de profielblokken [first, stop) beslaat."""
+    if stop <= first:
+        return None
+    start = cycle.start + first * SLOT_S
+    end = min(cycle.end, cycle.start + stop * SLOT_S)
+    profile = cycle.profile[first:stop]
+    wh = 0.0
+    for i, watt in enumerate(profile):
+        wh += watt * min(SLOT_S, end - (start + i * SLOT_S)) / 3600.0
+    peak = cycle.peak_w if max(profile) >= max(cycle.profile) else max(profile)
+    return Cycle(
+        start=start,
+        end=end,
+        energy_kwh=round(wh / 1000.0, 4),
+        profile=list(profile),
+        peak_w=round(peak, 1),
+        cycle_id=str(int(start)),
+    )
+
+
+def quiet_gap(cycle: Cycle, edge: int = 2) -> tuple[int, int] | None:
+    """De langste rustige periode midden in een cyclus: (eerste blok, aantal blokken).
+
+    Rustig is: hooguit 5 W of 10% van het gemiddelde boven het laagste blok.
+    De eerste en laatste `edge` blokken tellen niet mee.
+    """
+    profile = cycle.profile
+    last = len(profile) - edge
+    if last - edge < 1:
+        return None
+    limit = min(profile[edge:last]) + max(5.0, 0.1 * sum(profile) / len(profile))
+    best: tuple[int, int] | None = None
+    run_start: int | None = None
+    for i in range(edge, last + 1):
+        quiet = i < last and profile[i] <= limit
+        if quiet and run_start is None:
+            run_start = i
+        elif not quiet and run_start is not None:
+            if best is None or i - run_start > best[1]:
+                best = (run_start, i - run_start)
+            run_start = None
+    return best
+
+
+def split_cycle(cycle: Cycle, at_s: float | None = None) -> tuple[Cycle | None, Cycle | None]:
+    """Deel een cyclus in tweeën.
+
+    Zonder `at_s` (seconden na de start) valt de rustigste periode ertussenuit;
+    met `at_s` wordt er precies op dat blok geknipt.
+    """
+    blocks = len(cycle.profile)
+    if at_s is None:
+        gap = quiet_gap(cycle)
+        if gap is None:
+            raise ValueError("cyclus is te kort om te splitsen")
+        first_stop, second_start = gap[0], gap[0] + gap[1]
+    else:
+        first_stop = second_start = round(at_s / SLOT_S)
+        if not 0 < first_stop < blocks:
+            raise ValueError("splitspunt ligt buiten de cyclus")
+    return _part(cycle, 0, first_stop), _part(cycle, second_start, blocks)
+
+
 @dataclass
 class CycleDetector:
     """Toestandsmachine: rust -> kandidaat -> actief -> rust.

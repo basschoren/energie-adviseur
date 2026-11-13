@@ -37,7 +37,8 @@ from .const import (
     UNAVAILABLE,
     signal,
 )
-from .core.cycle_detector import Cycle, CycleDetector, DetectorConfig
+from .core import SLOT_S
+from .core.cycle_detector import Cycle, CycleDetector, DetectorConfig, quiet_gap, split_cycle
 from .core.program_matcher import Program, match, rebuild
 from .core.scheduler import Advice, ChainPlan, best_start, plan_chain
 from .market import get_market, parse_time
@@ -77,6 +78,7 @@ class ApplianceManager:
         self.detector = CycleDetector(self._detector_config())
         self.programs: dict[str, Program] = {}
         self.cycles: list[Cycle] = []
+        self.ignored: set[str] = set()  # cycli die bij het splitsen zijn vervallen
         self.selected: str | None = None
         self.loads = 0
         self.pending_dry = 0
@@ -107,6 +109,7 @@ class ApplianceManager:
         stored = await self._store.async_load() or {}
         self.programs = {p["program_id"]: Program.from_dict(p) for p in stored.get("programs", [])}
         self.cycles = [Cycle.from_dict(c) for c in stored.get("cycles", [])]
+        self.ignored = set(stored.get("ignored", []))
         self.selected = stored.get("selected")
         self.loads = int(stored.get("loads", 0))
         self.pending_dry = int(stored.get("pending_dry", 0))
@@ -130,6 +133,7 @@ class ApplianceManager:
         return {
             "programs": [p.to_dict() for p in self.programs.values()],
             "cycles": [c.to_dict() for c in self.cycles[-MAX_CYCLES:]],
+            "ignored": sorted(self.ignored)[-MAX_CYCLES:],
             "selected": self.selected,
             "loads": self.loads,
             "pending_dry": self.pending_dry,
@@ -322,17 +326,59 @@ class ApplianceManager:
             self.selected = None
         self._changed()
 
+    def _describe(self, cycle: Cycle) -> dict[str, Any]:
+        out: dict[str, Any] = {
+            "cycle_id": cycle.cycle_id,
+            "start": dt_util.utc_from_timestamp(cycle.start).isoformat(),
+            "duur": fmt_duration(cycle.duration_s),
+            "kwh": cycle.energy_kwh,
+        }
+        gap = quiet_gap(cycle)
+        if gap is not None:
+            watt = sum(cycle.profile[gap[0] : gap[0] + gap[1]]) / gap[1]
+            out["rustigste_periode"] = (
+                f"na {fmt_duration(gap[0] * SLOT_S)}, {fmt_duration(gap[1] * SLOT_S)} lang, gemiddeld {watt:.0f} W"
+            )
+        return out
+
     def unlabeled(self) -> list[dict[str, Any]]:
-        return [
-            {
-                "cycle_id": c.cycle_id,
-                "start": dt_util.utc_from_timestamp(c.start).isoformat(),
-                "duur": fmt_duration(c.duration_s),
-                "kwh": c.energy_kwh,
-            }
-            for c in self.cycles[-30:]
-            if c.program_id is None
+        return [self._describe(c) for c in self.cycles[-30:] if c.program_id is None]
+
+    def split_cycle(self, cycle_id: str | None = None, minutes: float | None = None, keep: str = "both") -> list[dict]:
+        """Deel een cyclus in tweeën, bijvoorbeeld als twee beurten als één zijn geteld.
+
+        Zonder `minutes` wordt geknipt op de rustigste periode. Met `keep` kan één
+        helft worden weggegooid (nadraaien, kreukbeveiliging).
+        """
+        cycle = self.last_cycle if cycle_id is None else next((c for c in self.cycles if c.cycle_id == cycle_id), None)
+        if cycle is None:
+            raise HomeAssistantError("Geen cyclus gevonden om te splitsen")
+        try:
+            first, second = split_cycle(cycle, None if minutes is None else float(minutes) * 60.0)
+        except ValueError as err:
+            raise HomeAssistantError(f"Splitsen lukt niet: {err}") from err
+        cfg = self.detector.config
+        wanted = {"both": (first, second), "first": (first, None), "second": (None, second)}[keep]
+        parts = [
+            part
+            for part in wanted
+            if part is not None and part.duration_s >= cfg.min_duration_s and part.energy_kwh >= cfg.min_energy_kwh
         ]
+        if not parts:
+            raise HomeAssistantError("Na het splitsen blijft er geen bruikbare cyclus over; kies een ander moment")
+        previous = self.programs.get(cycle.program_id or "")
+        self.cycles.remove(cycle)
+        self.ignored.add(cycle.cycle_id)
+        for part in parts:
+            self.ignored.discard(part.cycle_id)
+            self.cycles = [c for c in self.cycles if c.cycle_id != part.cycle_id]
+            self.cycles.append(part)
+        self.cycles.sort(key=lambda c: c.start)
+        if previous is not None:
+            rebuild(previous, self.cycles)
+        self._absorb_unlabeled()
+        self._changed()
+        return [self._describe(part) | {"programma": self.program_name(part.program_id)} for part in parts]
 
     def set_loads(self, value: int) -> None:
         self.loads = max(0, int(value))
@@ -480,7 +526,7 @@ class ApplianceManager:
         current = self.hass.states.get(self.power_entity)
         unit_kw = current is not None and current.attributes.get("unit_of_measurement") == "kW"
         detector = CycleDetector(self._detector_config())
-        known = {c.cycle_id for c in self.cycles}
+        known = {c.cycle_id for c in self.cycles} | self.ignored
         found: list[Cycle] = []
         last_ts: float | None = None
         delay = detector.config.stop_delay_s + 1

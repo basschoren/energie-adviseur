@@ -11,6 +11,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
@@ -389,3 +390,50 @@ async def test_quarter_hour_prices_known_until(hass: HomeAssistant) -> None:
     end = dt_util.as_local(start + timedelta(hours=2))
     expected = ("" if end.date() == dt_util.now().date() else "morgen ") + end.strftime("%H:%M")
     assert f"prijzen bekend tot {expected}." in response["advice"]
+
+
+async def test_split_cycle(hass: HomeAssistant) -> None:
+    set_prices(hass)
+    hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    washer = await add(hass, appliance("Wasmachine", "washer", "sensor.was_power"), "Wasmachine", "sensor.was_power")
+    wm = washer.runtime_data
+
+    # een gewone was leren, daarna twee wassen die door stand-by van 8 W als één cyclus tellen
+    run_cycle(wm, WASH)
+    wm.label_cycle("Katoen 40")
+    wm.cycles[0].start -= 86400
+    wm.cycles[0].end -= 86400
+    wm.cycles[0].cycle_id = str(int(wm.cycles[0].start))
+    run_cycle(wm, WASH + [(20, 8)] + WASH)
+    await hass.async_block_till_done()
+    assert len(wm.cycles) == 2
+    merged = wm.last_cycle
+    assert merged.program_id is None
+    described = hass.states.get(entity(hass, washer, "last_program")).attributes["onbekende_cycli"]
+    assert described[0]["rustigste_periode"].startswith("na 1u35, 20 min lang")
+
+    response = await hass.services.async_call(
+        DOMAIN, "split_cycle", {"appliance": "Wasmachine", "cycle_id": merged.cycle_id}, blocking=True, return_response=True
+    )
+    assert [part["programma"] for part in response["cycles"]] == ["Katoen 40", "Katoen 40"]
+    assert len(wm.cycles) == 3
+    assert wm.program_by_name("Katoen 40").count == 3
+    assert wm.unlabeled() == []
+
+    # alleen het eerste deel bewaren (nadraaien weggooien); opnieuw inlezen haalt het origineel niet terug
+    run_cycle(wm, WASH + [(60, 8)])
+    await hass.async_block_till_done()
+    tail = wm.last_cycle
+    response = await hass.services.async_call(
+        DOMAIN, "split_cycle", {"appliance": washer.entry_id, "minutes": 95, "keep": "first"}, blocking=True, return_response=True
+    )
+    assert len(response["cycles"]) == 1
+    kept = next(c for c in wm.cycles if c.cycle_id == tail.cycle_id)
+    assert kept.duration_s == 95 * 60
+    assert kept.program_id == wm.program_by_name("Katoen 40").program_id
+    assert len(wm.cycles) == 4
+
+    # een onmogelijk splitspunt geeft een nette fout
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(DOMAIN, "split_cycle", {"appliance": "Wasmachine", "minutes": 900}, blocking=True)

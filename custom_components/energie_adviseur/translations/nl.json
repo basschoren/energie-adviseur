@@ -162,6 +162,13 @@
         "dishwasher": "Vaatwasser",
         "other": "Overig"
       }
+    },
+    "split_keep": {
+      "options": {
+        "both": "Beide delen",
+        "first": "Alleen het eerste deel",
+        "second": "Alleen het tweede deel"
+      }
     }
   },
   "entity": {
@@ -299,6 +306,28 @@
         "program": {
           "name": "Programma",
           "description": "Naam van het programma."
+        }
+      }
+    },
+    "split_cycle": {
+      "name": "Cyclus splitsen",
+      "description": "Deel een cyclus in tweeën, bijvoorbeeld als twee beurten als één zijn geteld.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "Het apparaat."
+        },
+        "cycle_id": {
+          "name": "Cyclus",
+          "description": "Id van de cyclus; leeg betekent de laatste cyclus."
+        },
+        "minutes": {
+          "name": "Splitsen na",
+          "description": "Minuten na de start van de cyclus; leeg splitst op de rustigste periode."
+        },
+        "keep": {
+          "name": "Bewaren",
+          "description": "Welk deel je bewaart."
         }
       }
     },
