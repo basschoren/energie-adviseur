@@ -26,7 +26,11 @@ MANAGERS = {KIND_HUB: HubManager, KIND_APPLIANCE: ApplianceManager, KIND_HEATING
 
 
 def _manager(hass: HomeAssistant, entry_id: str, expected: type | tuple[type, ...]) -> Any:
+    """Zoek het onderdeel op ID of, als dat niets oplevert, op naam (bijvoorbeeld 'Wasmachine')."""
     entry = hass.config_entries.async_get_entry(entry_id)
+    if entry is None:
+        wanted = entry_id.strip().casefold()
+        entry = next((e for e in hass.config_entries.async_entries(DOMAIN) if e.title.casefold() == wanted), None)
     manager = getattr(entry, "runtime_data", None) if entry and entry.domain == DOMAIN else None
     if not isinstance(manager, expected):
         raise HomeAssistantError("Dit onderdeel van Energie Adviseur is niet gevonden of niet geladen")

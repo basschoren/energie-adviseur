@@ -33,9 +33,9 @@ async def test_import_history(recorder_mock, hass: HomeAssistant, freezer) -> No
     assert manager.last_cycle.energy_kwh == pytest.approx(1.2, abs=0.1)
     assert len(manager.unlabeled()) == 1
 
-    # nogmaals inlezen levert geen dubbele cycli op
+    # nogmaals inlezen (nu op naam) levert geen dubbele cycli op
     response = await hass.services.async_call(
-        DOMAIN, "import_history", {"entry": entry.entry_id, "days": 1}, blocking=True, return_response=True
+        DOMAIN, "import_history", {"entry": "vaatwasser", "days": 1}, blocking=True, return_response=True
     )
     assert response == {"imported": 0}
     assert len(manager.cycles) == 1
