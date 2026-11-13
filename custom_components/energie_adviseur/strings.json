@@ -337,11 +337,29 @@
         },
         "minutes": {
           "name": "Split after",
-          "description": "Minutes after the start of the cycle; empty splits at the quietest period."
+          "description": "Minutes after the start of the cycle, in half-minute steps; empty splits at the quietest period."
         },
         "keep": {
           "name": "Keep",
           "description": "Which part to keep."
+        }
+      }
+    },
+    "restore_cycle": {
+      "name": "Restore cycle",
+      "description": "Bring back the original cycle. Undoes a split; otherwise the period is read again from the recorder in 30-second detail.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance."
+        },
+        "cycle_id": {
+          "name": "Cycle",
+          "description": "Cycle id (one of the parts is enough)."
+        },
+        "from_history": {
+          "name": "Read from recorder",
+          "description": "Always read the period again from the recorder, even when the cycle from before the split was kept."
         }
       }
     },

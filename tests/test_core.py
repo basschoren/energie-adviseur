@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energie_adviseur"))
 
-from core import SLOT_S  # noqa: E402
+from core import DETAIL_S, SLOT_S  # noqa: E402
 from core.cycle_detector import CycleDetector, quiet_gap, split_cycle  # noqa: E402
 from core.heating_model import DayRecord, cop_at, fit, hourly_advice, implied_cop  # noqa: E402
 from core.price import parse_intervals, price_scale  # noqa: E402
@@ -347,6 +347,35 @@ class SplitTest(unittest.TestCase):
         for at in (0, cycle.duration_s + SLOT_S):
             with self.assertRaises(ValueError):
                 split_cycle(cycle, at_s=at)
+
+    def test_detail_is_kept_per_30_seconds(self):
+        cycle = self.merged()
+        self.assertEqual(cycle.step_s, DETAIL_S)
+        self.assertEqual(len(cycle.detail), round(cycle.duration_s / DETAIL_S))
+        self.assertEqual(len(cycle.profile), round(cycle.duration_s / SLOT_S))
+        wh = sum(w * DETAIL_S / 3600 for w in cycle.detail)
+        self.assertAlmostEqual(wh / 1000, cycle.energy_kwh, delta=0.001)
+
+    def test_split_on_half_minute(self):
+        cycle = self.merged()
+        a, b = split_cycle(cycle, at_s=97.5 * 60)
+        self.assertEqual(a.duration_s, 97.5 * 60)
+        self.assertEqual(b.start, cycle.start + 97.5 * 60)
+        self.assertEqual(len(a.detail), 195)
+        self.assertEqual(len(a.profile), 20)  # 19 hele blokken en een half blok
+        self.assertAlmostEqual(a.energy_kwh + b.energy_kwh, cycle.energy_kwh, delta=0.001)
+        for part in (a, b):
+            wh = sum(w * min(SLOT_S, part.duration_s - i * SLOT_S) / 3600 for i, w in enumerate(part.profile))
+            self.assertAlmostEqual(wh / 1000, part.energy_kwh, delta=0.001)
+
+    def test_old_cycle_without_detail_splits_per_five_minutes(self):
+        cycle = self.merged()
+        cycle.detail = []
+        self.assertEqual(cycle.step_s, SLOT_S)
+        a, b = split_cycle(cycle, at_s=97.5 * 60)  # afgerond op 100 minuten
+        self.assertEqual(a.duration_s, 100 * 60)
+        self.assertEqual(a.detail, [])
+        self.assertAlmostEqual(a.energy_kwh + b.energy_kwh, cycle.energy_kwh, delta=0.001)
 
     def test_split_parts_match_learned_program(self):
         programs = [learned("Katoen 40", [(15, 2000), (40, 150), (30, 300), (10, 500)])]

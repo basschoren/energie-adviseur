@@ -55,8 +55,12 @@ def appliance_payload(manager: ApplianceManager) -> dict[str, Any]:
                 "energy_kwh": cycle.energy_kwh,
                 "peak_w": cycle.peak_w,
                 "program": manager.program_name(cycle.program_id),
-                "profile": cycle.profile,
-                "quiet_gap": list(gap) if gap else None,
+                # het fijnste bewaarde verloop: per 30 seconden, of per 5 minuten bij oudere cycli
+                "series": cycle.series,
+                "step_s": cycle.step_s,
+                # rustigste periode in blokken van step_s
+                "quiet_gap": [g * (SLOT_S // cycle.step_s) for g in gap] if gap else None,
+                "has_original": manager.original_of(cycle) is not None,
             }
         )
     return {

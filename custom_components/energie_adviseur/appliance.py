@@ -63,6 +63,9 @@ def fmt_time(ts: float) -> str:
     return local.strftime("%d-%m %H:%M")
 
 
+MAX_ORIGINALS = 50
+
+
 def _same_run(a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
     """Overlappen twee perioden voor meer dan de helft van de kortste? Dan is het dezelfde beurt."""
     overlap = min(a_end, b_end) - max(a_start, b_start)
@@ -86,6 +89,7 @@ class ApplianceManager:
         self.cycles: list[Cycle] = []
         self.ignored: set[str] = set()  # cycli die bij het splitsen zijn vervallen
         self.removed: list[list[float]] = []  # [start, eind] van verwijderde cycli; inlezen slaat ze over
+        self.originals: list[dict[str, Any]] = []  # cycli van voor een splitsing, om die ongedaan te maken
         self.selected: str | None = None
         self.loads = 0
         self.pending_dry = 0
@@ -118,6 +122,7 @@ class ApplianceManager:
         self.cycles = [Cycle.from_dict(c) for c in stored.get("cycles", [])]
         self.ignored = set(stored.get("ignored", []))
         self.removed = [list(r) for r in stored.get("removed", [])]
+        self.originals = list(stored.get("originals", []))
         self.selected = stored.get("selected")
         self.loads = int(stored.get("loads", 0))
         self.pending_dry = int(stored.get("pending_dry", 0))
@@ -143,6 +148,7 @@ class ApplianceManager:
             "cycles": [c.to_dict() for c in self.cycles[-MAX_CYCLES:]],
             "ignored": sorted(self.ignored)[-MAX_CYCLES:],
             "removed": self.removed[-MAX_CYCLES:],
+            "originals": self.originals[-MAX_ORIGINALS:],
             "selected": self.selected,
             "loads": self.loads,
             "pending_dry": self.pending_dry,
@@ -393,6 +399,7 @@ class ApplianceManager:
             raise HomeAssistantError("Na het splitsen blijft er geen bruikbare cyclus over; kies een ander moment")
         previous = self.programs.get(cycle.program_id or "")
         self.cycles.remove(cycle)
+        self.originals = (self.originals + [cycle.to_dict()])[-MAX_ORIGINALS:]
         self.ignored.add(cycle.cycle_id)
         for part in parts:
             self.ignored.discard(part.cycle_id)
@@ -539,36 +546,26 @@ class ApplianceManager:
 
     # ------------------------------------------------------------ historie
 
-    async def async_import_history(self, days: int) -> int:
-        """Haal eerdere cycli uit de recorder (zolang die de ruwe metingen bewaart)."""
+    async def _detect_from_history(self, start: datetime, end: datetime) -> list[Cycle]:
+        """Alle cycli die de detector in de ruwe metingen van de recorder vindt."""
         from homeassistant.components.recorder import get_instance, history
 
         if "recorder" not in self.hass.config.components:
             raise HomeAssistantError("De recorder van Home Assistant is niet actief; er is geen historie om in te lezen")
-        end = dt_util.utcnow()
-        start = end - timedelta(days=days)
         result = await get_instance(self.hass).async_add_executor_job(
             partial(history.state_changes_during_period, self.hass, start, end, self.power_entity, no_attributes=True)
         )
         current = self.hass.states.get(self.power_entity)
         unit_kw = current is not None and current.attributes.get("unit_of_measurement") == "kW"
         detector = CycleDetector(self._detector_config())
-        known = {c.cycle_id for c in self.cycles} | self.ignored
         found: list[Cycle] = []
         last_ts: float | None = None
         delay = detector.config.stop_delay_s + 1
 
-        # perioden die al bekend of bewust verwijderd zijn; de starttijd kan een paar
-        # seconden verschillen met de live gemeten cyclus, dus vergelijken op overlap
-        taken = [(c.start, c.end) for c in self.cycles] + [(r[0], r[1]) for r in self.removed]
-
         def feed(ts: float, power: float | None) -> None:
             cycle = detector.update(ts, power)
-            if cycle is None or cycle.cycle_id in known:
-                return
-            if any(_same_run(cycle.start, cycle.end, start, end) for start, end in taken):
-                return
-            found.append(cycle)
+            if cycle is not None:
+                found.append(cycle)
 
         for state in result.get(self.power_entity, []):
             ts = state.last_updated.timestamp()
@@ -583,10 +580,86 @@ class ApplianceManager:
             feed(ts, power)
             last_ts = ts
         current_start = self.detector.start if self.detector.running else None
+        return [c for c in found if current_start is None or c.end < current_start]
+
+    async def async_import_history(self, days: int) -> int:
+        """Haal eerdere cycli uit de recorder (zolang die de ruwe metingen bewaart)."""
+        end = dt_util.utcnow()
+        detected = await self._detect_from_history(end - timedelta(days=days), end)
+        known = {c.cycle_id for c in self.cycles} | self.ignored
+        # perioden die al bekend of bewust verwijderd zijn; de starttijd kan een paar
+        # seconden verschillen met de live gemeten cyclus, dus vergelijken op overlap
+        taken = [(c.start, c.end) for c in self.cycles] + [(r[0], r[1]) for r in self.removed]
+        found = [
+            c
+            for c in detected
+            if c.cycle_id not in known and not any(_same_run(c.start, c.end, start, end_) for start, end_ in taken)
+        ]
         for cycle in found:
-            if current_start is not None and cycle.end >= current_start:
-                continue
             self._handle_cycle(cycle, quiet=True)
         self.cycles.sort(key=lambda c: c.start)
         self._changed()
         return len(found)
+
+    # ------------------------------------------------------------ herstellen
+
+    def original_of(self, cycle: Cycle) -> dict[str, Any] | None:
+        """De kleinste bewaarde oorspronkelijke cyclus waar deze cyclus een deel van is."""
+        inside = [
+            o
+            for o in self.originals
+            if o["cycle_id"] != cycle.cycle_id or o["end"] != cycle.end
+            if o["start"] - 1 <= cycle.start and cycle.end <= o["end"] + 1
+        ]
+        return min(inside, key=lambda o: o["end"] - o["start"], default=None)
+
+    def _replace(self, new: list[Cycle]) -> list[dict[str, Any]]:
+        """Zet cycli terug en haal alles weg wat dezelfde tijd beslaat (de delen van een splitsing)."""
+        touched: set[str] = set()
+        keep: list[Cycle] = []
+        for existing in self.cycles:
+            if any(_same_run(existing.start, existing.end, c.start, c.end) for c in new):
+                if existing.program_id:
+                    touched.add(existing.program_id)
+            else:
+                keep.append(existing)
+        for cycle in new:
+            cycle.program_id = None
+            self.ignored.discard(cycle.cycle_id)
+        self.removed = [r for r in self.removed if not any(_same_run(r[0], r[1], c.start, c.end) for c in new)]
+        self.cycles = sorted(keep + new, key=lambda c: c.start)
+        for program_id in touched:
+            if program_id in self.programs:
+                rebuild(self.programs[program_id], self.cycles)
+        self._absorb_unlabeled()
+        self._changed()
+        return [self._describe(c) | {"programma": self.program_name(c.program_id)} for c in new]
+
+    async def async_restore_cycle(self, cycle_id: str, from_history: bool = False) -> list[dict[str, Any]]:
+        """Haal de oorspronkelijke cyclus terug.
+
+        Is de cyclus een deel van een splitsing, dan komt de cyclus van voor die
+        splitsing terug. Anders (of met `from_history`) wordt de periode opnieuw uit
+        de recorder gelezen, met het verloop per 30 seconden.
+        """
+        cycle = next((c for c in self.cycles if c.cycle_id == cycle_id), None)
+        if cycle is None:
+            raise HomeAssistantError("Geen cyclus gevonden om terug te halen")
+        original = None if from_history else self.original_of(cycle)
+        if original is not None:
+            self.originals.remove(original)
+            return self._replace([Cycle.from_dict(original)])
+        margin = timedelta(hours=8)
+        detected = await self._detect_from_history(
+            dt_util.utc_from_timestamp(cycle.start) - margin, dt_util.utc_from_timestamp(cycle.end) + margin
+        )
+        hits = [c for c in detected if min(c.end, cycle.end) - max(c.start, cycle.start) > 0]
+        if not hits:
+            raise HomeAssistantError(
+                "De recorder heeft van deze periode geen metingen meer; de cyclus kan niet opnieuw worden opgehaald"
+            )
+        # splitsingen binnen de teruggehaalde periode zijn daarmee vervallen
+        self.originals = [
+            o for o in self.originals if not any(_same_run(o["start"], o["end"], c.start, c.end) for c in hits)
+        ]
+        return self._replace(hits)

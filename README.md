@@ -58,7 +58,10 @@ In de zijbalk van Home Assistant staat de pagina **Energie Adviseur** (alleen vo
 
 - **Cycli verwijderen**: met *Verwijderen* haal je een cyclus weg, bijvoorbeeld als dezelfde beurt twee keer is herkend. Het programma wordt opnieuw berekend en historie inlezen haalt de cyclus niet terug.
 
-Splitsen gaat per 5 minuten, omdat het verbruik per blok van 5 minuten wordt bewaard. Een splitsing is niet terug te draaien.
+- **Splitsing ongedaan maken**: bij elk deel van een gesplitste cyclus staat *Splitsing ongedaan maken*. Dat zet de cyclus van voor de splitsing terug, zodat je opnieuw kunt splitsen. Bij meerdere splitsingen ga je stap voor stap terug.
+- **Opnieuw ophalen**: leest de periode van een cyclus opnieuw uit de historie van Home Assistant. Gebruik dit voor cycli die zijn ingelezen of gesplitst met een versie ouder dan 0.5: die zijn alleen per 5 minuten bewaard en hebben geen bewaarde cyclus van voor de splitsing. Dit kan zolang Home Assistant de ruwe metingen nog heeft (standaard ongeveer 10 dagen).
+
+Splitsen gaat per 30 seconden. Na een klik in de grafiek stel je het moment fijn af met het minutenveld of met de pijltjestoetsen (Shift verspringt 5 minuten). Namen die je aan delen had gegeven, vervallen als je de splitsing ongedaan maakt.
 
 Na een update van de integratie moet je Home Assistant herstarten voordat de pagina verschijnt.
 
@@ -76,7 +79,8 @@ data:
 ```
 
 - Zonder `minutes` wordt geknipt op de rustigste periode; die periode zelf vervalt.
-- Met `minutes` knip je op een zelf gekozen aantal minuten na de start.
+- Met `minutes` knip je op een zelf gekozen aantal minuten na de start, per halve minuut (bijvoorbeeld `97.5`).
+- Met de actie `energie_adviseur.restore_cycle` maak je een splitsing ongedaan of haal je de cyclus opnieuw uit de historie.
 - Met `keep: first` of `keep: second` bewaar je maar één deel, bijvoorbeeld om het nadraaien weg te gooien.
 
 De delen worden daarna meteen vergeleken met de programma's die je al hebt geleerd. Bij `appliance` mag je de naam van het apparaat invullen.

@@ -439,6 +439,66 @@ async def test_split_cycle(hass: HomeAssistant) -> None:
         await hass.services.async_call(DOMAIN, "split_cycle", {"appliance": "Wasmachine", "minutes": 900}, blocking=True)
 
 
+async def test_split_on_half_minute_and_undo(hass: HomeAssistant) -> None:
+    set_prices(hass)
+    hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    washer = await add(hass, appliance("Wasmachine", "washer", "sensor.was_power"), "Wasmachine", "sensor.was_power")
+    wm = washer.runtime_data
+    run_cycle(wm, WASH + [(20, 8)] + WASH)
+    await hass.async_block_till_done()
+    original = wm.last_cycle
+    assert original.step_s == 30
+
+    # verkeerd gesplitst op 60,5 minuut, en daarna het eerste deel nog eens
+    response = await hass.services.async_call(
+        DOMAIN, "split_cycle", {"appliance": "Wasmachine", "cycle_id": original.cycle_id, "minutes": 60.5},
+        blocking=True, return_response=True,
+    )
+    first, second = wm.cycles
+    assert first.duration_s == 60.5 * 60
+    assert second.start == original.start + 60.5 * 60
+    assert len(response["cycles"]) == 2
+    await hass.services.async_call(
+        DOMAIN, "split_cycle", {"appliance": "Wasmachine", "cycle_id": first.cycle_id, "minutes": 30}, blocking=True
+    )
+    assert len(wm.cycles) == 3
+    wm.label_cycle("Rest", second.cycle_id)
+
+    # terughalen gaat stap voor stap: eerst de laatste splitsing ongedaan
+    response = await hass.services.async_call(
+        DOMAIN, "restore_cycle", {"appliance": "Wasmachine", "cycle_id": wm.cycles[1].cycle_id},
+        blocking=True, return_response=True,
+    )
+    assert [c.duration_s for c in wm.cycles] == [60.5 * 60, second.duration_s]
+    assert len(response["cycles"]) == 1
+    # daarna de eerste; vanaf het tweede deel werkt dat ook, en de naam van dat deel vervalt
+    await hass.services.async_call(
+        DOMAIN, "restore_cycle", {"appliance": "Wasmachine", "cycle_id": second.cycle_id}, blocking=True
+    )
+    assert len(wm.cycles) == 1
+    restored = wm.cycles[0]
+    assert (restored.start, restored.end, restored.energy_kwh) == (original.start, original.end, original.energy_kwh)
+    assert restored.detail == original.detail
+    assert restored.program_id is None
+    assert wm.program_by_name("Rest").count == 0
+    assert wm.originals == []
+
+    # nu goed splitsen op de rustige periode
+    await hass.services.async_call(
+        DOMAIN, "split_cycle", {"appliance": "Wasmachine", "cycle_id": restored.cycle_id, "minutes": 105}, blocking=True
+    )
+    assert [c.duration_s for c in wm.cycles] == [105 * 60, 105 * 60]
+
+    # de bewaarde cyclus overleeft een herstart
+    assert await hass.config_entries.async_reload(washer.entry_id)
+    await hass.async_block_till_done()
+    wm = washer.runtime_data
+    assert len(wm.originals) == 1
+    await wm.async_restore_cycle(wm.cycles[1].cycle_id)
+    assert len(wm.cycles) == 1 and wm.cycles[0].duration_s == original.duration_s
+
+
 async def test_panel_and_cycles_websocket(hass: HomeAssistant, hass_client, hass_ws_client, hass_admin_user) -> None:
     set_prices(hass)
     hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
@@ -475,7 +535,9 @@ async def test_panel_and_cycles_websocket(hass: HomeAssistant, hass_client, hass
     assert found["programs"][0]["name"] == "Katoen 40"
     cycle = found["cycles"][0]
     assert cycle["program"] == "Katoen 40"
-    assert len(cycle["profile"]) == 19
+    assert cycle["step_s"] == 30
+    assert len(cycle["series"]) == 190
+    assert cycle["has_original"] is False
     assert cycle["end"] - cycle["start"] == 95 * 60
     assert cycle["quiet_gap"] is None or len(cycle["quiet_gap"]) == 2
 

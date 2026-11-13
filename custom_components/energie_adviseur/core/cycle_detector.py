@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from . import SLOT_S
+from . import DETAIL_S, SLOT_S
 
 
 @dataclass
@@ -27,10 +27,21 @@ class Cycle:
     peak_w: float = 0.0
     program_id: str | None = None
     cycle_id: str = ""
+    detail: list[float] = field(default_factory=list)  # W per blok van DETAIL_S; leeg bij cycli van voor 0.5
 
     @property
     def duration_s(self) -> float:
         return self.end - self.start
+
+    @property
+    def step_s(self) -> int:
+        """Resolutie van het fijnste bewaarde verloop."""
+        return DETAIL_S if self.detail else SLOT_S
+
+    @property
+    def series(self) -> list[float]:
+        """Het fijnste bewaarde verloop: W per blok van step_s."""
+        return self.detail or self.profile
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -40,24 +51,47 @@ class Cycle:
         return cls(**data)
 
 
+def _to_watts(wh_buckets: list[float], size: float, duration: float) -> list[float]:
+    """Wh per blok -> gemiddeld vermogen per blok; het laatste blok kan korter zijn."""
+    n = max(1, int(-(-duration // size)))
+    out = []
+    for i, wh in enumerate((wh_buckets + [0.0] * n)[:n]):
+        length = min(size, duration - i * size)
+        out.append(round(wh * 3600.0 / length, 1) if length > 0 else 0.0)
+    return out
+
+
+def _regroup(series: list[float], step: float, size: float, duration: float) -> list[float]:
+    """Verloop in blokken van `step` omrekenen naar blokken van `size`."""
+    wh: list[float] = []
+    for i, watt in enumerate(series):
+        length = max(0.0, min(step, duration - i * step))
+        j = int(i * step // size)
+        while len(wh) <= j:
+            wh.append(0.0)
+        wh[j] += watt * length / 3600.0
+    return _to_watts(wh, size, duration)
+
+
 def _part(cycle: Cycle, first: int, stop: int) -> Cycle | None:
-    """Het deel van een cyclus dat de profielblokken [first, stop) beslaat."""
+    """Het deel van een cyclus dat de blokken [first, stop) van het fijnste verloop beslaat."""
     if stop <= first:
         return None
-    start = cycle.start + first * SLOT_S
-    end = min(cycle.end, cycle.start + stop * SLOT_S)
-    profile = cycle.profile[first:stop]
-    wh = 0.0
-    for i, watt in enumerate(profile):
-        wh += watt * min(SLOT_S, end - (start + i * SLOT_S)) / 3600.0
-    peak = cycle.peak_w if max(profile) >= max(cycle.profile) else max(profile)
+    step, series = cycle.step_s, cycle.series
+    start = cycle.start + first * step
+    end = min(cycle.end, cycle.start + stop * step)
+    duration = end - start
+    piece = list(series[first:stop])
+    wh = sum(watt * max(0.0, min(step, duration - i * step)) / 3600.0 for i, watt in enumerate(piece))
+    peak = cycle.peak_w if max(piece) >= max(series) else max(piece)
     return Cycle(
         start=start,
         end=end,
         energy_kwh=round(wh / 1000.0, 4),
-        profile=list(profile),
+        profile=_regroup(piece, step, SLOT_S, duration) if cycle.detail else piece,
         peak_w=round(peak, 1),
         cycle_id=str(int(start)),
+        detail=piece if cycle.detail else [],
     )
 
 
@@ -89,16 +123,19 @@ def split_cycle(cycle: Cycle, at_s: float | None = None) -> tuple[Cycle | None, 
     """Deel een cyclus in tweeën.
 
     Zonder `at_s` (seconden na de start) valt de rustigste periode ertussenuit;
-    met `at_s` wordt er precies op dat blok geknipt.
+    met `at_s` wordt geknipt op het dichtstbijzijnde blok van het fijnste verloop
+    (30 seconden, of 5 minuten bij cycli zonder detail).
     """
-    blocks = len(cycle.profile)
+    step = cycle.step_s
+    blocks = len(cycle.series)
     if at_s is None:
         gap = quiet_gap(cycle)
         if gap is None:
             raise ValueError("cyclus is te kort om te splitsen")
-        first_stop, second_start = gap[0], gap[0] + gap[1]
+        ratio = SLOT_S // step
+        first_stop, second_start = gap[0] * ratio, (gap[0] + gap[1]) * ratio
     else:
-        first_stop = second_start = round(at_s / SLOT_S)
+        first_stop = second_start = round(at_s / step)
         if not 0 < first_stop < blocks:
             raise ValueError("splitspunt ligt buiten de cyclus")
     return _part(cycle, 0, first_stop), _part(cycle, second_start, blocks)
@@ -121,7 +158,8 @@ class CycleDetector:
     wh: float = 0.0
     wh_at_low: float = 0.0
     peak_w: float = 0.0
-    buckets: list[float] = field(default_factory=list)  # Wh per blok
+    buckets: list[float] = field(default_factory=list)  # Wh per blok van SLOT_S
+    fine: list[float] = field(default_factory=list)  # Wh per blok van DETAIL_S
 
     def update(self, ts: float, power: float | None = None) -> Cycle | None:
         """Verwerk een meting (of een tik zonder nieuwe meting).
@@ -172,38 +210,32 @@ class CycleDetector:
         self.low_since = None
         self.wh = self.wh_at_low = self.peak_w = 0.0
         self.buckets = []
+        self.fine = []
 
     def _integrate(self, t0: float, t1: float, power: float) -> None:
         assert self.start is not None
-        t = t0
-        while t < t1:
-            idx = int((t - self.start) // SLOT_S)
-            edge = self.start + (idx + 1) * SLOT_S
-            seg_end = min(t1, edge)
-            wh = power * (seg_end - t) / 3600.0
-            while len(self.buckets) <= idx:
-                self.buckets.append(0.0)
-            self.buckets[idx] += wh
-            self.wh += wh
-            t = seg_end
+        self.wh += power * (t1 - t0) / 3600.0
+        for buckets, size in ((self.buckets, SLOT_S), (self.fine, DETAIL_S)):
+            t = t0
+            while t < t1:
+                idx = int((t - self.start) // size)
+                seg_end = min(t1, self.start + (idx + 1) * size)
+                while len(buckets) <= idx:
+                    buckets.append(0.0)
+                buckets[idx] += power * (seg_end - t) / 3600.0
+                t = seg_end
 
     def _finish(self) -> Cycle | None:
         assert self.start is not None and self.low_since is not None
         start, end = self.start, self.low_since
-        n = max(1, int(-(-(end - start) // SLOT_S)))
-        buckets = (self.buckets + [0.0] * n)[:n]
-        # laatste blok kan korter zijn dan SLOT_S
-        profile = []
-        for i, wh in enumerate(buckets):
-            length = min(SLOT_S, end - (start + i * SLOT_S))
-            profile.append(round(wh * 3600.0 / length, 1) if length > 0 else 0.0)
         cycle = Cycle(
             start=start,
             end=end,
             energy_kwh=round(self.wh_at_low / 1000.0, 4),
-            profile=profile,
+            profile=_to_watts(self.buckets, SLOT_S, end - start),
             peak_w=round(self.peak_w, 1),
             cycle_id=str(int(start)),
+            detail=_to_watts(self.fine, DETAIL_S, end - start),
         )
         self._reset(start=None)
         cfg = self.config

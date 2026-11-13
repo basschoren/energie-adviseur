@@ -62,8 +62,9 @@ split_cycle:
     minutes:
       selector:
         number:
-          min: 1
+          min: 0.5
           max: 1440
+          step: 0.5
           unit_of_measurement: min
           mode: box
     keep:
@@ -75,6 +76,21 @@ split_cycle:
             - both
             - first
             - second
+restore_cycle:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    cycle_id:
+      required: true
+      selector:
+        text:
+    from_history:
+      default: false
+      selector:
+        boolean:
 import_history:
   fields:
     entry:

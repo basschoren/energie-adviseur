@@ -44,8 +44,13 @@ const TEXT = {
     cancel: "Annuleren",
     useQuiet: "Rustigste periode gebruiken",
     quietNote: "De rustigste periode zelf vervalt.",
-    stepNote: "Splitsen gaat per 5 minuten; fijner is het verbruik niet opgeslagen.",
-    noUndo: "Splitsen is niet terug te draaien.",
+    stepFine: "Splitsen gaat per 30 seconden. Fijn afstellen kan met het minutenveld of met de pijltjestoetsen in de grafiek (Shift = 5 minuten).",
+    stepCoarse: "Van deze cyclus is het verloop alleen per 5 minuten bewaard. Met ‘Opnieuw ophalen’ lees je het per 30 seconden in.",
+    undoNote: "Een splitsing maak je later ongedaan met ‘Splitsing ongedaan maken’.",
+    undo: "Splitsing ongedaan maken",
+    refetch: "Opnieuw ophalen",
+    refetchTitle: "Leest deze periode opnieuw uit de historie van Home Assistant, per 30 seconden. Delen van een eerdere splitsing worden weer één cyclus.",
+    restored: (n) => (n === 1 ? "Oorspronkelijke cyclus teruggehaald." : `${n} cycli teruggehaald.`),
     splitDone: "Cyclus gesplitst.",
     remove: "Verwijderen",
     removeAsk: "Deze cyclus verwijderen? Historie inlezen haalt hem niet terug.",
@@ -91,8 +96,13 @@ const TEXT = {
     cancel: "Cancel",
     useQuiet: "Use quietest period",
     quietNote: "The quietest period itself is dropped.",
-    stepNote: "Splitting works in 5-minute steps; usage is not stored in finer detail.",
-    noUndo: "Splitting cannot be undone.",
+    stepFine: "Splitting works in 30-second steps. Fine-tune with the minutes field or the arrow keys in the chart (Shift = 5 minutes).",
+    stepCoarse: "This cycle was only stored in 5-minute steps. Use ‘Fetch again’ to read it in 30-second detail.",
+    undoNote: "You can undo a split later with ‘Undo split’.",
+    undo: "Undo split",
+    refetch: "Fetch again",
+    refetchTitle: "Reads this period again from the Home Assistant history, in 30-second detail. Parts of an earlier split become one cycle again.",
+    restored: (n) => (n === 1 ? "Original cycle restored." : `${n} cycles restored.`),
     splitDone: "Cycle split.",
     remove: "Delete",
     removeAsk: "Delete this cycle? Importing history will not bring it back.",
@@ -333,27 +343,28 @@ class EnergieAdviseurPanel extends HTMLElement {
 
   // ---------------------------------------------------------------- rekenen
 
-  _slot() {
-    return this._data?.slot_s || 300;
+  /** Lengte in seconden van een blok in het verloop van deze cyclus: 30, of 300 bij oudere cycli. */
+  _slot(cycle) {
+    return cycle?.step_s || this._data?.slot_s || 300;
   }
 
   /** Verbruik (kWh) en duur (s) van de profielblokken [first, stop). */
   _part(cycle, first, stop) {
-    const slot = this._slot();
+    const slot = this._slot(cycle);
     if (stop <= first) return { duration: 0, kwh: 0 };
     const start = cycle.start + first * slot;
     const end = Math.min(cycle.end, cycle.start + stop * slot);
     let wh = 0;
     for (let i = first; i < stop; i += 1) {
       const length = Math.min(slot, cycle.end - (cycle.start + i * slot));
-      wh += (cycle.profile[i] * Math.max(0, length)) / 3600;
+      wh += (cycle.series[i] * Math.max(0, length)) / 3600;
     }
     return { duration: end - start, kwh: wh / 1000, start, end };
   }
 
   /** De twee delen bij de huidige markering: [deel1, deel2]. */
   _parts(cycle) {
-    const n = cycle.profile.length;
+    const n = cycle.series.length;
     if (this._marker.type === "gap") {
       const [first, count] = cycle.quiet_gap;
       return [this._part(cycle, 0, first), this._part(cycle, first + count, n)];
@@ -363,20 +374,24 @@ class EnergieAdviseurPanel extends HTMLElement {
 
   // ---------------------------------------------------------------- opmaak
 
-  _duration(seconds) {
-    const minutes = Math.round(seconds / 60);
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    if (this._t === TEXT.nl) return h ? `${h}u${String(m).padStart(2, "0")}` : `${m} min`;
-    return h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m} min`;
+  /** Duur; met `exact` worden halve minuten als seconden getoond in plaats van afgerond. */
+  _duration(seconds, exact = false) {
+    const total = exact ? Math.round(seconds) : Math.round(seconds / 60) * 60;
+    const h = Math.floor(total / 3600);
+    const m = Math.floor((total % 3600) / 60);
+    const rest = total % 60 ? ` ${total % 60} s` : "";
+    if (this._t === TEXT.nl) return (h ? `${h}u${String(m).padStart(2, "0")}` : `${m} min`) + rest;
+    return (h ? `${h}h ${String(m).padStart(2, "0")}m` : `${m} min`) + rest;
   }
 
   _kwh(value) {
     return `${value.toLocaleString(this._locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} kWh`;
   }
 
-  _clock(ts) {
-    return new Date(ts * 1000).toLocaleTimeString(this._locale, { hour: "2-digit", minute: "2-digit" });
+  _clock(ts, seconds = false) {
+    const options = { hour: "2-digit", minute: "2-digit" };
+    if (seconds) options.second = "2-digit";
+    return new Date(ts * 1000).toLocaleTimeString(this._locale, options);
   }
 
   _day(ts) {
@@ -503,6 +518,7 @@ class EnergieAdviseurPanel extends HTMLElement {
               value="${esc(value)}" data-field="name" data-focus="name-${esc(cycle.cycle_id)}">
           </label>
           <button class="primary" data-action="save" ${canSave ? "" : "disabled"}>${esc(t.save)}</button>
+          <button data-action="restore" title="${esc(t.refetchTitle)}" ${this._busy ? "disabled" : ""}>${esc(cycle.has_original ? t.undo : t.refetch)}</button>
           <button class="danger" data-action="remove" data-focus="remove-${esc(cycle.cycle_id)}" ${this._busy ? "disabled" : ""}>${esc(t.remove)}</button>
         </div>
         ${
@@ -522,9 +538,9 @@ class EnergieAdviseurPanel extends HTMLElement {
 
   _chart(cycle) {
     const t = this._t;
-    const slot = this._slot();
-    const n = cycle.profile.length;
-    const peak = Math.max(...cycle.profile, 1);
+    const slot = this._slot(cycle);
+    const n = cycle.series.length;
+    const peak = Math.max(...cycle.series, 1);
     const magnitude = 10 ** Math.floor(Math.log10(peak));
     const top = [1, 2, 2.5, 5, 10].map((f) => f * magnitude).find((v) => v >= peak);
     const VB_W = this._dims.w;
@@ -536,7 +552,7 @@ class EnergieAdviseurPanel extends HTMLElement {
     const base = PLOT.top + PLOT_H;
 
     let path = `M${x(0).toFixed(1)},${base}`;
-    cycle.profile.forEach((w, i) => {
+    cycle.series.forEach((w, i) => {
       path += ` L${x(i).toFixed(1)},${y(w).toFixed(1)} L${x(i + 1).toFixed(1)},${y(w).toFixed(1)}`;
     });
     path += ` L${x(n).toFixed(1)},${base} Z`;
@@ -582,13 +598,14 @@ class EnergieAdviseurPanel extends HTMLElement {
 
   _splitPanel(cycle) {
     const t = this._t;
-    const slot = this._slot();
+    const slot = this._slot(cycle);
     const [first, second] = this._parts(cycle);
     const gap = this._marker.type === "gap";
     const at = gap ? cycle.quiet_gap[0] : this._marker.idx;
     const keep = this._keep;
+    const fine = slot < 60;
     const part = (label, p, kept) =>
-      `<span class="${kept ? "" : "off"}">${esc(label)}: ${esc(this._clock(p.start))}–${esc(this._clock(p.end))} · ${esc(this._duration(p.duration))} · ${esc(
+      `<span class="${kept ? "" : "off"}">${esc(label)}: ${esc(this._clock(p.start, fine))}–${esc(this._clock(p.end, fine))} · ${esc(this._duration(p.duration, true))} · ${esc(
         this._kwh(p.kwh)
       )}${kept ? "" : ` (${esc(t.dropped)})`}</span>`;
     const radio = (value, label) =>
@@ -598,18 +615,18 @@ class EnergieAdviseurPanel extends HTMLElement {
       <div class="split">
         <div class="row">
           <label>${esc(t.splitMinutes)}
-            <input type="number" min="5" max="${(cycle.profile.length - 1) * (slot / 60)}" step="${slot / 60}" value="${minutes}"
+            <input type="number" min="${slot / 60}" max="${(cycle.series.length - 1) * (slot / 60)}" step="${slot / 60}" value="${minutes}"
               data-field="minutes" data-focus="minutes-${esc(cycle.cycle_id)}">
           </label>
-          <span class="grow"><b>${esc(t.splitAt)} ${esc(this._clock(cycle.start + at * slot))}</b>
-            <span class="muted">(${esc(this._duration(at * slot))} ${esc(t.afterStart)})</span></span>
+          <span class="grow"><b>${esc(t.splitAt)} ${esc(this._clock(cycle.start + at * slot, fine))}</b>
+            <span class="muted">(${esc(this._duration(at * slot, true))} ${esc(t.afterStart)})</span></span>
           ${cycle.quiet_gap && !gap ? `<button data-action="quiet">${esc(t.useQuiet)}</button>` : ""}
         </div>
         <div class="parts">${part(t.part1, first, keep !== "second")}${part(t.part2, second, keep !== "first")}</div>
         <fieldset><legend>${esc(t.keep)}</legend>
           ${radio("both", t.keepBoth)}${radio("first", t.keepFirst)}${radio("second", t.keepSecond)}
         </fieldset>
-        <p class="muted">${gap ? `${esc(t.quietNote)} ` : ""}${esc(t.stepNote)} ${esc(t.noUndo)}</p>
+        <p class="muted">${gap ? `${esc(t.quietNote)} ` : ""}${esc(fine ? t.stepFine : t.stepCoarse)} ${esc(t.undoNote)}</p>
         <div class="row">
           <button class="primary" data-action="split" ${this._busy ? "disabled" : ""}>${esc(t.split)}</button>
           <button data-action="cancel">${esc(t.cancel)}</button>
@@ -629,13 +646,13 @@ class EnergieAdviseurPanel extends HTMLElement {
     const rect = svg.getBoundingClientRect();
     const vbX = ((clientX - rect.left) / rect.width) * this._dims.w;
     const fraction = (vbX - PLOT.left) / (this._dims.w - PLOT.left - PLOT.right);
-    const n = cycle.profile.length;
+    const n = cycle.series.length;
     return Math.min(n - 1, Math.max(1, Math.round(fraction * n)));
   }
 
   _setMarker(cycle, idx) {
-    if (cycle.profile.length < 2) return;
-    this._marker = { cycleId: cycle.cycle_id, type: "at", idx: Math.min(cycle.profile.length - 1, Math.max(1, idx)) };
+    if (cycle.series.length < 2) return;
+    this._marker = { cycleId: cycle.cycle_id, type: "at", idx: Math.min(cycle.series.length - 1, Math.max(1, idx)) };
     this._render();
   }
 
@@ -683,6 +700,14 @@ class EnergieAdviseurPanel extends HTMLElement {
           return this._t.saved(name);
         }
       );
+    } else if (action === "restore" && cycle) {
+      this._run(
+        () => this._service("restore_cycle", { appliance: appliance.entry_id, cycle_id: cycle.cycle_id }, true),
+        (response) => {
+          if (this._marker && this._marker.cycleId === cycle.cycle_id) this._marker = null;
+          return this._t.restored(response?.cycles?.length ?? 1);
+        }
+      );
     } else if (action === "remove" && cycle) {
       this._confirm = cycle.cycle_id;
       this._render();
@@ -708,7 +733,7 @@ class EnergieAdviseurPanel extends HTMLElement {
       this._render();
     } else if (action === "split" && cycle && this._marker) {
       const data = { appliance: appliance.entry_id, cycle_id: cycle.cycle_id, keep: this._keep };
-      if (this._marker.type === "at") data.minutes = (this._marker.idx * this._slot()) / 60;
+      if (this._marker.type === "at") data.minutes = (this._marker.idx * this._slot(cycle)) / 60;
       this._run(
         () => this._service("split_cycle", data, true),
         () => {
@@ -741,7 +766,7 @@ class EnergieAdviseurPanel extends HTMLElement {
       this._render();
     } else if (field === "minutes" && cycle) {
       const minutes = Number(event.target.value);
-      if (Number.isFinite(minutes)) this._setMarker(cycle, Math.round((minutes * 60) / this._slot()));
+      if (Number.isFinite(minutes)) this._setMarker(cycle, Math.round((minutes * 60) / this._slot(cycle)));
     }
   }
 
@@ -759,8 +784,9 @@ class EnergieAdviseurPanel extends HTMLElement {
     const current =
       this._marker && this._marker.cycleId === cycle.cycle_id && this._marker.type === "at"
         ? this._marker.idx
-        : Math.round(cycle.profile.length / 2);
-    this._setMarker(cycle, current + (event.key === "ArrowRight" ? 1 : -1));
+        : Math.round(cycle.series.length / 2);
+    const jump = event.shiftKey ? Math.max(1, Math.round(300 / this._slot(cycle))) : 1;
+    this._setMarker(cycle, current + (event.key === "ArrowRight" ? jump : -jump));
   }
 
   _onHover(event) {
@@ -775,13 +801,14 @@ class EnergieAdviseurPanel extends HTMLElement {
       return;
     }
     const idx = this._slotAt(svg, cycle, event.clientX);
-    const px = PLOT.left + (idx / cycle.profile.length) * (this._dims.w - PLOT.left - PLOT.right);
+    const px = PLOT.left + (idx / cycle.series.length) * (this._dims.w - PLOT.left - PLOT.right);
     line.setAttribute("x1", px);
     line.setAttribute("x2", px);
     line.setAttribute("visibility", "visible");
-    const before = Math.round(cycle.profile[idx - 1]);
-    const after = Math.round(cycle.profile[idx]);
-    readout.textContent = `${this._clock(cycle.start + idx * this._slot())} · ${this._duration(idx * this._slot())} ${this._t.afterStart} · ${before} W → ${after} W`;
+    const before = Math.round(cycle.series[idx - 1]);
+    const after = Math.round(cycle.series[idx]);
+    const step = this._slot(cycle);
+    readout.textContent = `${this._clock(cycle.start + idx * step, step < 60)} · ${this._duration(idx * step, true)} ${this._t.afterStart} · ${before} W → ${after} W`;
   }
 }
 

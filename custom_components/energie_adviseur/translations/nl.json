@@ -337,11 +337,29 @@
         },
         "minutes": {
           "name": "Splitsen na",
-          "description": "Minuten na de start van de cyclus; leeg splitst op de rustigste periode."
+          "description": "Minuten na de start van de cyclus, per halve minuut; leeg splitst op de rustigste periode."
         },
         "keep": {
           "name": "Bewaren",
           "description": "Welk deel je bewaart."
+        }
+      }
+    },
+    "restore_cycle": {
+      "name": "Cyclus terughalen",
+      "description": "Haal de oorspronkelijke cyclus terug. Maakt een splitsing ongedaan; anders wordt de periode opnieuw uit de recorder gelezen, per 30 seconden.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "Het apparaat."
+        },
+        "cycle_id": {
+          "name": "Cyclus",
+          "description": "Id van de cyclus (een van de delen is genoeg)."
+        },
+        "from_history": {
+          "name": "Uit de recorder lezen",
+          "description": "Lees de periode altijd opnieuw uit de recorder, ook als de cyclus van voor de splitsing is bewaard."
         }
       }
     },
