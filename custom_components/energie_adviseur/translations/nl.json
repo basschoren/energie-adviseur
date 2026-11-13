@@ -1,0 +1,325 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Onderdeel toevoegen",
+        "menu_options": {
+          "appliance": "Apparaat (wasmachine, droger, vaatwasser, overig)",
+          "heating": "Verwarming (gas en airco's)"
+        }
+      },
+      "hub": {
+        "title": "Algemene instellingen",
+        "data": {
+          "price_entity": "Sensor met stroomprijs",
+          "price_multiplier": "Vermenigvuldigingsfactor prijs",
+          "use_energy_dashboard": "Zonne-forecast uit het Energie-dashboard gebruiken",
+          "solar_entity": "Sensor met zonne-forecast (optioneel)",
+          "base_load_w": "Basisverbruik van het huis",
+          "export_deduction": "Aftrek op teruglevering",
+          "ai_entity": "Lokale AI (optioneel)",
+          "advice_time": "Tijdstip van het dagadvies"
+        },
+        "data_description": {
+          "price_entity": "Een sensor die in zijn attributen de uur- of kwartierprijzen van vandaag en morgen heeft (Tibber, Frank Energie, Zonneplan, Nordpool, ENTSO-e).",
+          "price_multiplier": "Laat op 1 staan, tenzij de prijzen niet in EUR/kWh, ct/kWh of EUR/MWh staan.",
+          "solar_entity": "Alleen nodig als het Energie-dashboard geen forecast heeft, bijvoorbeeld een Solcast-sensor met een gedetailleerde forecast als attribuut.",
+          "base_load_w": "Opwek boven dit verbruik telt als overschot.",
+          "export_deduction": "Hoeveel een teruggeleverde kWh minder opbrengt dan een afgenomen kWh kost. Bij 0 heeft zonnestroom geen invloed op het advies.",
+          "ai_entity": "Een AI Task- of gespreksentiteit (bijv. Ollama) die het dagadvies verwoordt. De berekeningen hangen er niet van af."
+        }
+      },
+      "appliance": {
+        "title": "Apparaat",
+        "data": {
+          "name": "Naam",
+          "appliance_type": "Soort apparaat",
+          "power_entity": "Vermogenssensor",
+          "start_w": "Startdrempel",
+          "stop_w": "Stopdrempel",
+          "stop_delay_min": "Wachttijd voor einde",
+          "tolerance_pct": "Tolerantie bij herkennen",
+          "window_start": "Vroegste starttijd",
+          "window_end": "Laatste starttijd",
+          "dryer_entry": "Gekoppelde droger"
+        },
+        "data_description": {
+          "power_entity": "Actueel vermogen in W of kW, bijvoorbeeld van een slimme stekker.",
+          "start_w": "Boven dit vermogen begint een cyclus.",
+          "stop_w": "Onder dit vermogen is de cyclus mogelijk klaar.",
+          "stop_delay_min": "Hoe lang het vermogen onder de stopdrempel moet blijven. Kies langer dan de langste pauze binnen een programma.",
+          "tolerance_pct": "Hoger herkent programma's makkelijker, maar verwart gelijkende programma's eerder.",
+          "window_start": "Het advies stelt alleen starttijden voor waarop je het apparaat kunt aanzetten.",
+          "dryer_entry": "Alleen voor de wasmachine: de droger die na elke was draait. Voeg de droger eerst toe."
+        }
+      },
+      "heating": {
+        "title": "Verwarming",
+        "data": {
+          "gas_entity": "Gasmeter",
+          "indoor_entities": "Binnentemperatuursensoren",
+          "outdoor_entity": "Buitentemperatuur",
+          "airco_entities": "Verbruik van de airco's",
+          "gas_price": "Gasprijs",
+          "gas_price_entity": "Sensor met gasprijs (optioneel)",
+          "boiler_eff_pct": "Rendement cv-ketel",
+          "cop_7": "COP airco bij 7 °C buiten",
+          "cop_minus7": "COP airco bij -7 °C buiten"
+        },
+        "data_description": {
+          "gas_entity": "Totaalstand van het gasverbruik in m³.",
+          "outdoor_entity": "Een temperatuursensor of een weer-entiteit. Met een weer-entiteit wordt ook de uurverwachting gebruikt.",
+          "airco_entities": "Energie- (kWh) of vermogenssensoren (W) van de airco's.",
+          "cop_7": "Aanname uit de specificaties van het toestel; zonder warmtemeter is dit niet te meten."
+        }
+      }
+    },
+    "error": {
+      "stop_above_start": "De stopdrempel mag niet hoger zijn dan de startdrempel."
+    },
+    "abort": {
+      "already_configured": "Dit onderdeel is al ingesteld.",
+      "heating_exists": "Verwarming is al ingesteld."
+    }
+  },
+  "options": {
+    "step": {
+      "hub": {
+        "title": "Algemene instellingen",
+        "data": {
+          "price_entity": "Sensor met stroomprijs",
+          "price_multiplier": "Vermenigvuldigingsfactor prijs",
+          "use_energy_dashboard": "Zonne-forecast uit het Energie-dashboard gebruiken",
+          "solar_entity": "Sensor met zonne-forecast (optioneel)",
+          "base_load_w": "Basisverbruik van het huis",
+          "export_deduction": "Aftrek op teruglevering",
+          "ai_entity": "Lokale AI (optioneel)",
+          "advice_time": "Tijdstip van het dagadvies"
+        },
+        "data_description": {
+          "price_entity": "Een sensor die in zijn attributen de uur- of kwartierprijzen van vandaag en morgen heeft (Tibber, Frank Energie, Zonneplan, Nordpool, ENTSO-e).",
+          "price_multiplier": "Laat op 1 staan, tenzij de prijzen niet in EUR/kWh, ct/kWh of EUR/MWh staan.",
+          "solar_entity": "Alleen nodig als het Energie-dashboard geen forecast heeft, bijvoorbeeld een Solcast-sensor met een gedetailleerde forecast als attribuut.",
+          "base_load_w": "Opwek boven dit verbruik telt als overschot.",
+          "export_deduction": "Hoeveel een teruggeleverde kWh minder opbrengt dan een afgenomen kWh kost. Bij 0 heeft zonnestroom geen invloed op het advies.",
+          "ai_entity": "Een AI Task- of gespreksentiteit (bijv. Ollama) die het dagadvies verwoordt. De berekeningen hangen er niet van af."
+        }
+      },
+      "appliance": {
+        "title": "Apparaat",
+        "data": {
+          "name": "Naam",
+          "appliance_type": "Soort apparaat",
+          "power_entity": "Vermogenssensor",
+          "start_w": "Startdrempel",
+          "stop_w": "Stopdrempel",
+          "stop_delay_min": "Wachttijd voor einde",
+          "tolerance_pct": "Tolerantie bij herkennen",
+          "window_start": "Vroegste starttijd",
+          "window_end": "Laatste starttijd",
+          "dryer_entry": "Gekoppelde droger"
+        },
+        "data_description": {
+          "power_entity": "Actueel vermogen in W of kW, bijvoorbeeld van een slimme stekker.",
+          "start_w": "Boven dit vermogen begint een cyclus.",
+          "stop_w": "Onder dit vermogen is de cyclus mogelijk klaar.",
+          "stop_delay_min": "Hoe lang het vermogen onder de stopdrempel moet blijven. Kies langer dan de langste pauze binnen een programma.",
+          "tolerance_pct": "Hoger herkent programma's makkelijker, maar verwart gelijkende programma's eerder.",
+          "window_start": "Het advies stelt alleen starttijden voor waarop je het apparaat kunt aanzetten.",
+          "dryer_entry": "Alleen voor de wasmachine: de droger die na elke was draait. Voeg de droger eerst toe."
+        }
+      },
+      "heating": {
+        "title": "Verwarming",
+        "data": {
+          "gas_entity": "Gasmeter",
+          "indoor_entities": "Binnentemperatuursensoren",
+          "outdoor_entity": "Buitentemperatuur",
+          "airco_entities": "Verbruik van de airco's",
+          "gas_price": "Gasprijs",
+          "gas_price_entity": "Sensor met gasprijs (optioneel)",
+          "boiler_eff_pct": "Rendement cv-ketel",
+          "cop_7": "COP airco bij 7 °C buiten",
+          "cop_minus7": "COP airco bij -7 °C buiten"
+        },
+        "data_description": {
+          "gas_entity": "Totaalstand van het gasverbruik in m³.",
+          "outdoor_entity": "Een temperatuursensor of een weer-entiteit. Met een weer-entiteit wordt ook de uurverwachting gebruikt.",
+          "airco_entities": "Energie- (kWh) of vermogenssensoren (W) van de airco's.",
+          "cop_7": "Aanname uit de specificaties van het toestel; zonder warmtemeter is dit niet te meten."
+        }
+      }
+    },
+    "error": {
+      "stop_above_start": "De stopdrempel mag niet hoger zijn dan de startdrempel."
+    }
+  },
+  "selector": {
+    "appliance_type": {
+      "options": {
+        "washer": "Wasmachine",
+        "dryer": "Droger",
+        "dishwasher": "Vaatwasser",
+        "other": "Overig"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "idle": "Uit",
+          "running": "Bezig"
+        }
+      },
+      "last_program": {
+        "name": "Laatste programma"
+      },
+      "last_cycle_energy": {
+        "name": "Verbruik laatste cyclus"
+      },
+      "best_start": {
+        "name": "Beste starttijd"
+      },
+      "expected_cost": {
+        "name": "Verwachte kosten"
+      },
+      "saving": {
+        "name": "Besparing t.o.v. nu starten"
+      },
+      "laundry_plan": {
+        "name": "Wasplanning"
+      },
+      "gas_today": {
+        "name": "Gas vandaag"
+      },
+      "heat_demand": {
+        "name": "Warmtevraag per graaddag"
+      },
+      "gas_heat_cost": {
+        "name": "Warmtekosten gas"
+      },
+      "airco_heat_cost": {
+        "name": "Warmtekosten airco"
+      },
+      "estimated_cop": {
+        "name": "Geschatte COP (indicatief)"
+      },
+      "heating_advice": {
+        "name": "Stookadvies",
+        "state": {
+          "airco": "Airco",
+          "gas": "Gas",
+          "unknown": "Onbekend"
+        }
+      },
+      "daily_advice": {
+        "name": "Dagadvies"
+      },
+      "current_price": {
+        "name": "Huidige stroomprijs"
+      }
+    },
+    "binary_sensor": {
+      "good_moment": {
+        "name": "Nu gunstig om te starten"
+      },
+      "airco_cheaper": {
+        "name": "Airco voordeliger dan gas"
+      }
+    },
+    "select": {
+      "program": {
+        "name": "Programma voor advies"
+      },
+      "assign_cycle": {
+        "name": "Laatste cyclus toewijzen"
+      },
+      "dry_program": {
+        "name": "Droogprogramma"
+      }
+    },
+    "number": {
+      "loads": {
+        "name": "Aantal wasjes vandaag"
+      }
+    },
+    "text": {
+      "name_cycle": {
+        "name": "Laatste cyclus benoemen"
+      }
+    }
+  },
+  "services": {
+    "label_cycle": {
+      "name": "Cyclus benoemen",
+      "description": "Koppel een cyclus aan een nieuw of bestaand programma.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "Het apparaat."
+        },
+        "program": {
+          "name": "Programma",
+          "description": "Naam van het programma."
+        },
+        "cycle_id": {
+          "name": "Cyclus",
+          "description": "Id van de cyclus; leeg betekent de laatste cyclus."
+        }
+      }
+    },
+    "rename_program": {
+      "name": "Programma hernoemen",
+      "description": "Geef een geleerd programma een andere naam.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "Het apparaat."
+        },
+        "program": {
+          "name": "Programma",
+          "description": "Huidige naam."
+        },
+        "new_name": {
+          "name": "Nieuwe naam",
+          "description": "Nieuwe naam."
+        }
+      }
+    },
+    "delete_program": {
+      "name": "Programma verwijderen",
+      "description": "Verwijder een geleerd programma; de cycli ervan worden weer onbekend.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "Het apparaat."
+        },
+        "program": {
+          "name": "Programma",
+          "description": "Naam van het programma."
+        }
+      }
+    },
+    "import_history": {
+      "name": "Historie inlezen",
+      "description": "Lees eerdere cycli of stookdagen uit de recorder.",
+      "fields": {
+        "entry": {
+          "name": "Apparaat of verwarming",
+          "description": "Het onderdeel waarvoor je inleest."
+        },
+        "days": {
+          "name": "Dagen",
+          "description": "Hoeveel dagen terug."
+        }
+      }
+    },
+    "generate_advice": {
+      "name": "Advies maken",
+      "description": "Stel het dagadvies nu op.",
+      "fields": {}
+    }
+  }
+}

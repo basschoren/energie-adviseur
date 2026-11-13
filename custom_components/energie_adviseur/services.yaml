@@ -1,0 +1,55 @@
+label_cycle:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    program:
+      required: true
+      selector:
+        text:
+    cycle_id:
+      selector:
+        text:
+rename_program:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    program:
+      required: true
+      selector:
+        text:
+    new_name:
+      required: true
+      selector:
+        text:
+delete_program:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    program:
+      required: true
+      selector:
+        text:
+import_history:
+  fields:
+    entry:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    days:
+      default: 10
+      selector:
+        number:
+          min: 1
+          max: 730
+          mode: box
+generate_advice:

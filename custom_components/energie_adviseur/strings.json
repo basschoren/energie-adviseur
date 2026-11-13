@@ -1,0 +1,325 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Add a part",
+        "menu_options": {
+          "appliance": "Appliance (washing machine, dryer, dishwasher, other)",
+          "heating": "Heating (gas and air conditioners)"
+        }
+      },
+      "hub": {
+        "title": "General settings",
+        "data": {
+          "price_entity": "Electricity price sensor",
+          "price_multiplier": "Price multiplier",
+          "use_energy_dashboard": "Use solar forecast from the Energy dashboard",
+          "solar_entity": "Solar forecast sensor (optional)",
+          "base_load_w": "Base load of the house",
+          "export_deduction": "Export deduction",
+          "ai_entity": "Local AI (optional)",
+          "advice_time": "Time of the daily advice"
+        },
+        "data_description": {
+          "price_entity": "A sensor whose attributes hold the hourly or quarter-hourly prices for today and tomorrow (Tibber, Frank Energie, Zonneplan, Nordpool, ENTSO-e).",
+          "price_multiplier": "Leave at 1 unless the prices are not in EUR/kWh, ct/kWh or EUR/MWh.",
+          "solar_entity": "Only needed when the Energy dashboard has no forecast, e.g. a Solcast sensor with a detailed forecast attribute.",
+          "base_load_w": "Solar production above this level counts as surplus.",
+          "export_deduction": "How much less a returned kWh yields than a purchased kWh costs. At 0, solar power does not influence the advice.",
+          "ai_entity": "An AI Task or conversation entity (e.g. Ollama) that rewrites the daily advice. The calculations do not depend on it."
+        }
+      },
+      "appliance": {
+        "title": "Appliance",
+        "data": {
+          "name": "Name",
+          "appliance_type": "Type",
+          "power_entity": "Power sensor",
+          "start_w": "Start threshold",
+          "stop_w": "Stop threshold",
+          "stop_delay_min": "Stop delay",
+          "tolerance_pct": "Recognition tolerance",
+          "window_start": "Earliest start",
+          "window_end": "Latest start",
+          "dryer_entry": "Linked dryer"
+        },
+        "data_description": {
+          "power_entity": "Live power in W or kW, e.g. from a smart plug.",
+          "start_w": "Above this power a cycle starts.",
+          "stop_w": "Below this power the cycle may be finished.",
+          "stop_delay_min": "How long the power must stay below the stop threshold. Make it longer than the longest pause within a programme.",
+          "tolerance_pct": "Higher recognises programmes more easily but confuses similar ones sooner.",
+          "window_start": "Advice only proposes start times you can actually use.",
+          "dryer_entry": "Washing machine only: the dryer that runs after each wash. Add the dryer first."
+        }
+      },
+      "heating": {
+        "title": "Heating",
+        "data": {
+          "gas_entity": "Gas meter",
+          "indoor_entities": "Indoor temperature sensors",
+          "outdoor_entity": "Outdoor temperature",
+          "airco_entities": "Air conditioner consumption",
+          "gas_price": "Gas price",
+          "gas_price_entity": "Gas price sensor (optional)",
+          "boiler_eff_pct": "Boiler efficiency",
+          "cop_7": "Air conditioner COP at 7 °C outside",
+          "cop_minus7": "Air conditioner COP at -7 °C outside"
+        },
+        "data_description": {
+          "gas_entity": "Total gas consumption in m³.",
+          "outdoor_entity": "A temperature sensor or a weather entity. With a weather entity the hourly forecast is used.",
+          "airco_entities": "Energy (kWh) or power (W) sensors of the air conditioners.",
+          "cop_7": "Assumption from the unit's datasheet; it cannot be measured without a heat meter."
+        }
+      }
+    },
+    "error": {
+      "stop_above_start": "The stop threshold must not exceed the start threshold."
+    },
+    "abort": {
+      "already_configured": "This part is already configured.",
+      "heating_exists": "Heating is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "hub": {
+        "title": "General settings",
+        "data": {
+          "price_entity": "Electricity price sensor",
+          "price_multiplier": "Price multiplier",
+          "use_energy_dashboard": "Use solar forecast from the Energy dashboard",
+          "solar_entity": "Solar forecast sensor (optional)",
+          "base_load_w": "Base load of the house",
+          "export_deduction": "Export deduction",
+          "ai_entity": "Local AI (optional)",
+          "advice_time": "Time of the daily advice"
+        },
+        "data_description": {
+          "price_entity": "A sensor whose attributes hold the hourly or quarter-hourly prices for today and tomorrow (Tibber, Frank Energie, Zonneplan, Nordpool, ENTSO-e).",
+          "price_multiplier": "Leave at 1 unless the prices are not in EUR/kWh, ct/kWh or EUR/MWh.",
+          "solar_entity": "Only needed when the Energy dashboard has no forecast, e.g. a Solcast sensor with a detailed forecast attribute.",
+          "base_load_w": "Solar production above this level counts as surplus.",
+          "export_deduction": "How much less a returned kWh yields than a purchased kWh costs. At 0, solar power does not influence the advice.",
+          "ai_entity": "An AI Task or conversation entity (e.g. Ollama) that rewrites the daily advice. The calculations do not depend on it."
+        }
+      },
+      "appliance": {
+        "title": "Appliance",
+        "data": {
+          "name": "Name",
+          "appliance_type": "Type",
+          "power_entity": "Power sensor",
+          "start_w": "Start threshold",
+          "stop_w": "Stop threshold",
+          "stop_delay_min": "Stop delay",
+          "tolerance_pct": "Recognition tolerance",
+          "window_start": "Earliest start",
+          "window_end": "Latest start",
+          "dryer_entry": "Linked dryer"
+        },
+        "data_description": {
+          "power_entity": "Live power in W or kW, e.g. from a smart plug.",
+          "start_w": "Above this power a cycle starts.",
+          "stop_w": "Below this power the cycle may be finished.",
+          "stop_delay_min": "How long the power must stay below the stop threshold. Make it longer than the longest pause within a programme.",
+          "tolerance_pct": "Higher recognises programmes more easily but confuses similar ones sooner.",
+          "window_start": "Advice only proposes start times you can actually use.",
+          "dryer_entry": "Washing machine only: the dryer that runs after each wash. Add the dryer first."
+        }
+      },
+      "heating": {
+        "title": "Heating",
+        "data": {
+          "gas_entity": "Gas meter",
+          "indoor_entities": "Indoor temperature sensors",
+          "outdoor_entity": "Outdoor temperature",
+          "airco_entities": "Air conditioner consumption",
+          "gas_price": "Gas price",
+          "gas_price_entity": "Gas price sensor (optional)",
+          "boiler_eff_pct": "Boiler efficiency",
+          "cop_7": "Air conditioner COP at 7 °C outside",
+          "cop_minus7": "Air conditioner COP at -7 °C outside"
+        },
+        "data_description": {
+          "gas_entity": "Total gas consumption in m³.",
+          "outdoor_entity": "A temperature sensor or a weather entity. With a weather entity the hourly forecast is used.",
+          "airco_entities": "Energy (kWh) or power (W) sensors of the air conditioners.",
+          "cop_7": "Assumption from the unit's datasheet; it cannot be measured without a heat meter."
+        }
+      }
+    },
+    "error": {
+      "stop_above_start": "The stop threshold must not exceed the start threshold."
+    }
+  },
+  "selector": {
+    "appliance_type": {
+      "options": {
+        "washer": "Washing machine",
+        "dryer": "Dryer",
+        "dishwasher": "Dishwasher",
+        "other": "Other"
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "status": {
+        "name": "Status",
+        "state": {
+          "idle": "Idle",
+          "running": "Running"
+        }
+      },
+      "last_program": {
+        "name": "Last programme"
+      },
+      "last_cycle_energy": {
+        "name": "Last cycle energy"
+      },
+      "best_start": {
+        "name": "Best start time"
+      },
+      "expected_cost": {
+        "name": "Expected cost"
+      },
+      "saving": {
+        "name": "Saving versus starting now"
+      },
+      "laundry_plan": {
+        "name": "Laundry plan"
+      },
+      "gas_today": {
+        "name": "Gas today"
+      },
+      "heat_demand": {
+        "name": "Heat demand per degree day"
+      },
+      "gas_heat_cost": {
+        "name": "Heat cost gas"
+      },
+      "airco_heat_cost": {
+        "name": "Heat cost air conditioner"
+      },
+      "estimated_cop": {
+        "name": "Estimated COP (indicative)"
+      },
+      "heating_advice": {
+        "name": "Heating advice",
+        "state": {
+          "airco": "Air conditioner",
+          "gas": "Gas",
+          "unknown": "Unknown"
+        }
+      },
+      "daily_advice": {
+        "name": "Daily advice"
+      },
+      "current_price": {
+        "name": "Current electricity price"
+      }
+    },
+    "binary_sensor": {
+      "good_moment": {
+        "name": "Good moment to start"
+      },
+      "airco_cheaper": {
+        "name": "Air conditioner cheaper than gas"
+      }
+    },
+    "select": {
+      "program": {
+        "name": "Programme for advice"
+      },
+      "assign_cycle": {
+        "name": "Assign last cycle"
+      },
+      "dry_program": {
+        "name": "Drying programme"
+      }
+    },
+    "number": {
+      "loads": {
+        "name": "Washes today"
+      }
+    },
+    "text": {
+      "name_cycle": {
+        "name": "Name last cycle"
+      }
+    }
+  },
+  "services": {
+    "label_cycle": {
+      "name": "Label cycle",
+      "description": "Link a cycle to a new or existing programme.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance."
+        },
+        "program": {
+          "name": "Programme",
+          "description": "Programme name."
+        },
+        "cycle_id": {
+          "name": "Cycle",
+          "description": "Cycle id; empty means the last cycle."
+        }
+      }
+    },
+    "rename_program": {
+      "name": "Rename programme",
+      "description": "Give a learned programme another name.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance."
+        },
+        "program": {
+          "name": "Programme",
+          "description": "Current name."
+        },
+        "new_name": {
+          "name": "New name",
+          "description": "New name."
+        }
+      }
+    },
+    "delete_program": {
+      "name": "Delete programme",
+      "description": "Remove a learned programme; its cycles become unknown again.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance."
+        },
+        "program": {
+          "name": "Programme",
+          "description": "Programme name."
+        }
+      }
+    },
+    "import_history": {
+      "name": "Import history",
+      "description": "Read earlier cycles or heating days from the recorder.",
+      "fields": {
+        "entry": {
+          "name": "Appliance or heating",
+          "description": "The part to import for."
+        },
+        "days": {
+          "name": "Days",
+          "description": "How many days back."
+        }
+      }
+    },
+    "generate_advice": {
+      "name": "Generate advice",
+      "description": "Build the daily advice now.",
+      "fields": {}
+    }
+  }
+}
