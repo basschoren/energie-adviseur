@@ -63,6 +63,12 @@ def fmt_time(ts: float) -> str:
     return local.strftime("%d-%m %H:%M")
 
 
+def _same_run(a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
+    """Overlappen twee perioden voor meer dan de helft van de kortste? Dan is het dezelfde beurt."""
+    overlap = min(a_end, b_end) - max(a_start, b_start)
+    return overlap > 0.5 * min(a_end - a_start, b_end - b_start)
+
+
 class ApplianceManager:
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         self.hass = hass
@@ -79,6 +85,7 @@ class ApplianceManager:
         self.programs: dict[str, Program] = {}
         self.cycles: list[Cycle] = []
         self.ignored: set[str] = set()  # cycli die bij het splitsen zijn vervallen
+        self.removed: list[list[float]] = []  # [start, eind] van verwijderde cycli; inlezen slaat ze over
         self.selected: str | None = None
         self.loads = 0
         self.pending_dry = 0
@@ -110,6 +117,7 @@ class ApplianceManager:
         self.programs = {p["program_id"]: Program.from_dict(p) for p in stored.get("programs", [])}
         self.cycles = [Cycle.from_dict(c) for c in stored.get("cycles", [])]
         self.ignored = set(stored.get("ignored", []))
+        self.removed = [list(r) for r in stored.get("removed", [])]
         self.selected = stored.get("selected")
         self.loads = int(stored.get("loads", 0))
         self.pending_dry = int(stored.get("pending_dry", 0))
@@ -134,6 +142,7 @@ class ApplianceManager:
             "programs": [p.to_dict() for p in self.programs.values()],
             "cycles": [c.to_dict() for c in self.cycles[-MAX_CYCLES:]],
             "ignored": sorted(self.ignored)[-MAX_CYCLES:],
+            "removed": self.removed[-MAX_CYCLES:],
             "selected": self.selected,
             "loads": self.loads,
             "pending_dry": self.pending_dry,
@@ -344,6 +353,22 @@ class ApplianceManager:
     def unlabeled(self) -> list[dict[str, Any]]:
         return [self._describe(c) for c in self.cycles[-30:] if c.program_id is None]
 
+    def delete_cycle(self, cycle_id: str) -> None:
+        """Verwijder een cyclus, bijvoorbeeld als dezelfde beurt twee keer is herkend.
+
+        Het programma waar de cyclus bij hoorde wordt opnieuw berekend, en historie
+        inlezen haalt de cyclus niet terug.
+        """
+        cycle = next((c for c in self.cycles if c.cycle_id == cycle_id), None)
+        if cycle is None:
+            raise HomeAssistantError("Geen cyclus gevonden om te verwijderen")
+        previous = self.programs.get(cycle.program_id or "")
+        self.cycles.remove(cycle)
+        self.removed.append([cycle.start, cycle.end])
+        if previous is not None:
+            rebuild(previous, self.cycles)
+        self._changed()
+
     def split_cycle(self, cycle_id: str | None = None, minutes: float | None = None, keep: str = "both") -> list[dict]:
         """Deel een cyclus in tweeën, bijvoorbeeld als twee beurten als één zijn geteld.
 
@@ -533,10 +558,17 @@ class ApplianceManager:
         last_ts: float | None = None
         delay = detector.config.stop_delay_s + 1
 
+        # perioden die al bekend of bewust verwijderd zijn; de starttijd kan een paar
+        # seconden verschillen met de live gemeten cyclus, dus vergelijken op overlap
+        taken = [(c.start, c.end) for c in self.cycles] + [(r[0], r[1]) for r in self.removed]
+
         def feed(ts: float, power: float | None) -> None:
             cycle = detector.update(ts, power)
-            if cycle is not None and cycle.cycle_id not in known:
-                found.append(cycle)
+            if cycle is None or cycle.cycle_id in known:
+                return
+            if any(_same_run(cycle.start, cycle.end, start, end) for start, end in taken):
+                return
+            found.append(cycle)
 
         for state in result.get(self.power_entity, []):
             ts = state.last_updated.timestamp()

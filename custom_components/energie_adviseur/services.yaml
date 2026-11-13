@@ -38,6 +38,17 @@ delete_program:
       required: true
       selector:
         text:
+delete_cycle:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    cycle_id:
+      required: true
+      selector:
+        text:
 split_cycle:
   fields:
     appliance:

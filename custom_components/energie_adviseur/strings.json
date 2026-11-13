@@ -309,6 +309,20 @@
         }
       }
     },
+    "delete_cycle": {
+      "name": "Delete cycle",
+      "description": "Remove a cycle, for example when the same run was detected twice. Importing history does not bring it back.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance."
+        },
+        "cycle_id": {
+          "name": "Cycle",
+          "description": "Cycle id."
+        }
+      }
+    },
     "split_cycle": {
       "name": "Split cycle",
       "description": "Split a cycle in two, for example when two runs were counted as one.",

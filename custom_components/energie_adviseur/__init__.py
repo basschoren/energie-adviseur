@@ -50,6 +50,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def delete_program(call: ServiceCall) -> None:
         _manager(hass, call.data["appliance"], ApplianceManager).delete_program(call.data["program"])
 
+    async def delete_cycle(call: ServiceCall) -> None:
+        _manager(hass, call.data["appliance"], ApplianceManager).delete_cycle(call.data["cycle_id"])
+
     async def split_cycle(call: ServiceCall) -> ServiceResponse:
         manager = _manager(hass, call.data["appliance"], ApplianceManager)
         parts = manager.split_cycle(call.data.get("cycle_id"), call.data.get("minutes"), call.data["keep"])
@@ -82,6 +85,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.services.async_register(
         DOMAIN, "delete_program", delete_program, vol.Schema({**appliance, vol.Required("program"): cv.string})
+    )
+    hass.services.async_register(
+        DOMAIN, "delete_cycle", delete_cycle, vol.Schema({**appliance, vol.Required("cycle_id"): cv.string})
     )
     hass.services.async_register(
         DOMAIN,

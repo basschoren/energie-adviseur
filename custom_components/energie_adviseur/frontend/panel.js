@@ -47,6 +47,10 @@ const TEXT = {
     stepNote: "Splitsen gaat per 5 minuten; fijner is het verbruik niet opgeslagen.",
     noUndo: "Splitsen is niet terug te draaien.",
     splitDone: "Cyclus gesplitst.",
+    remove: "Verwijderen",
+    removeAsk: "Deze cyclus verwijderen? Historie inlezen haalt hem niet terug.",
+    removeYes: "Ja, verwijderen",
+    removed: "Cyclus verwijderd.",
     running: "draait nu",
     peak: "piek",
   },
@@ -90,6 +94,10 @@ const TEXT = {
     stepNote: "Splitting works in 5-minute steps; usage is not stored in finer detail.",
     noUndo: "Splitting cannot be undone.",
     splitDone: "Cycle split.",
+    remove: "Delete",
+    removeAsk: "Delete this cycle? Importing history will not bring it back.",
+    removeYes: "Yes, delete",
+    removed: "Cycle deleted.",
     running: "running now",
     peak: "peak",
   },
@@ -144,6 +152,12 @@ const STYLE = `
   button:disabled { opacity: 0.5; cursor: default; }
   button.primary { background: var(--ea-accent); border-color: var(--ea-accent); color: var(--text-primary-color, #fff); }
   button.primary:hover:not(:disabled) { background: var(--ea-accent); filter: brightness(1.08); }
+  button.danger { border-color: var(--ea-error); color: var(--ea-error); }
+  button.danger:hover:not(:disabled) { background: color-mix(in srgb, var(--ea-error) 10%, transparent); }
+  button.danger.solid { background: var(--ea-error); color: #fff; }
+  button.danger.solid:hover:not(:disabled) { background: var(--ea-error); filter: brightness(1.08); }
+  .confirm { border-top: 1px solid var(--ea-line); margin-top: 12px; padding-top: 12px; }
+  .confirm p { margin: 0 0 8px; }
   button.tab[aria-selected="true"], button.chip[aria-pressed="true"] {
     background: color-mix(in srgb, var(--ea-accent) 16%, transparent); border-color: var(--ea-accent); color: var(--ea-accent); font-weight: 500;
   }
@@ -207,6 +221,7 @@ class EnergieAdviseurPanel extends HTMLElement {
     this._names = {}; // cycle_id -> getypte naam
     this._marker = null; // { cycleId, type: "at", idx } | { cycleId, type: "gap" }
     this._keep = "both";
+    this._confirm = null; // cycle_id waarvoor om bevestiging van verwijderen wordt gevraagd
     this._days = 10;
     this._busy = false;
     this._status = null; // { text, error }
@@ -279,6 +294,7 @@ class EnergieAdviseurPanel extends HTMLElement {
       this._selected = appliances.length ? appliances[0].entry_id : null;
     }
     if (this._marker && !this._cycle(this._marker.cycleId)) this._marker = null;
+    if (this._confirm && !this._cycle(this._confirm)) this._confirm = null;
     this._render();
   }
 
@@ -487,7 +503,19 @@ class EnergieAdviseurPanel extends HTMLElement {
               value="${esc(value)}" data-field="name" data-focus="name-${esc(cycle.cycle_id)}">
           </label>
           <button class="primary" data-action="save" ${canSave ? "" : "disabled"}>${esc(t.save)}</button>
+          <button class="danger" data-action="remove" data-focus="remove-${esc(cycle.cycle_id)}" ${this._busy ? "disabled" : ""}>${esc(t.remove)}</button>
         </div>
+        ${
+          this._confirm === cycle.cycle_id
+            ? `<div class="confirm" role="alertdialog" aria-label="${esc(t.remove)}">
+                <p>${esc(t.removeAsk)}</p>
+                <div class="row">
+                  <button class="danger solid" data-action="remove-yes" data-focus="remove-yes-${esc(cycle.cycle_id)}" ${this._busy ? "disabled" : ""}>${esc(t.removeYes)}</button>
+                  <button data-action="remove-no">${esc(t.cancel)}</button>
+                </div>
+              </div>`
+            : ""
+        }
         ${marked ? this._splitPanel(cycle) : ""}
       </section>`;
   }
@@ -630,6 +658,7 @@ class EnergieAdviseurPanel extends HTMLElement {
       this._selected = button.dataset.id;
       this._filter = null;
       this._marker = null;
+      this._confirm = null;
       this._status = null;
       this._render();
     } else if (action === "filter") {
@@ -652,6 +681,23 @@ class EnergieAdviseurPanel extends HTMLElement {
         () => {
           delete this._names[cycle.cycle_id];
           return this._t.saved(name);
+        }
+      );
+    } else if (action === "remove" && cycle) {
+      this._confirm = cycle.cycle_id;
+      this._render();
+      this.shadowRoot.querySelector(`[data-focus="remove-yes-${CSS.escape(cycle.cycle_id)}"]`)?.focus();
+    } else if (action === "remove-no") {
+      this._confirm = null;
+      this._render();
+    } else if (action === "remove-yes" && cycle) {
+      this._run(
+        () => this._service("delete_cycle", { appliance: appliance.entry_id, cycle_id: cycle.cycle_id }),
+        () => {
+          this._confirm = null;
+          delete this._names[cycle.cycle_id];
+          if (this._marker && this._marker.cycleId === cycle.cycle_id) this._marker = null;
+          return this._t.removed;
         }
       );
     } else if (action === "quiet" && cycle) {

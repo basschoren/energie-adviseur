@@ -514,10 +514,22 @@ async def test_page_service_calls(hass: HomeAssistant, hass_ws_client) -> None:
     await call(2, "label_cycle", {"appliance": washer.entry_id, "program": "Katoen 40", "cycle_id": cycle_id}, False)
     assert wm.program_by_name("Katoen 40").count == 2
 
+    # een dubbele cyclus verwijderen: het programma leert alleen nog van de overgebleven cyclus
+    await call(4, "delete_cycle", {"appliance": washer.entry_id, "cycle_id": cycle_id}, False)
+    assert len(wm.cycles) == 1
+    assert wm.program_by_name("Katoen 40").count == 1
+    assert len(wm.removed) == 1
+    with pytest.raises(HomeAssistantError):
+        wm.delete_cycle("bestaat-niet")
+    assert await hass.config_entries.async_reload(washer.entry_id)
+    await hass.async_block_till_done()
+    wm = washer.runtime_data
+    assert len(wm.cycles) == 1 and len(wm.removed) == 1
+
     # zonder recorder (zoals in deze test) geeft inlezen een nette foutmelding
     await ws.send_json(
         {
-            "id": 3,
+            "id": 5,
             "type": "call_service",
             "domain": DOMAIN,
             "service": "import_history",

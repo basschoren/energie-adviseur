@@ -40,6 +40,25 @@ async def test_import_history(recorder_mock, hass: HomeAssistant, freezer) -> No
     assert response == {"imported": 0}
     assert len(manager.cycles) == 1
 
+    # dezelfde beurt met een iets andere starttijd (zoals live gemeten) telt niet als nieuw
+    manager.cycles[0].start += 20
+    manager.cycles[0].cycle_id = str(int(manager.cycles[0].start))
+    response = await hass.services.async_call(
+        DOMAIN, "import_history", {"entry": entry.entry_id, "days": 1}, blocking=True, return_response=True
+    )
+    assert response == {"imported": 0}
+
+    # een verwijderde cyclus komt bij opnieuw inlezen niet terug
+    await hass.services.async_call(
+        DOMAIN, "delete_cycle", {"appliance": "Vaatwasser", "cycle_id": manager.cycles[0].cycle_id}, blocking=True
+    )
+    assert manager.cycles == []
+    response = await hass.services.async_call(
+        DOMAIN, "import_history", {"entry": entry.entry_id, "days": 1}, blocking=True, return_response=True
+    )
+    assert response == {"imported": 0}
+    assert manager.cycles == []
+
 
 async def test_import_history_from_page(hass: HomeAssistant, hass_ws_client) -> None:
     """Het bericht dat de zijbalkpagina stuurt voor 'Historie inlezen'."""

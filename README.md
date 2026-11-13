@@ -56,6 +56,8 @@ In de zijbalk van Home Assistant staat de pagina **Energie Adviseur** (alleen vo
 - **Cycli een naam geven**: typ een naam achter de cyclus of kies een eerder gebruikte naam uit de suggesties. Een nieuwe naam wordt als programma bewaard en staat de volgende keer in de lijst.
 - **Cycli splitsen**: klik in de grafiek op het moment waar geknipt moet worden. Je ziet de duur en het verbruik van beide delen voordat je bevestigt, en je kunt één deel laten vervallen. De oranje band is de rustigste periode; met *Rustigste periode gebruiken* knip je die er in één keer tussenuit.
 
+- **Cycli verwijderen**: met *Verwijderen* haal je een cyclus weg, bijvoorbeeld als dezelfde beurt twee keer is herkend. Het programma wordt opnieuw berekend en historie inlezen haalt de cyclus niet terug.
+
 Splitsen gaat per 5 minuten, omdat het verbruik per blok van 5 minuten wordt bewaard. Een splitsing is niet terug te draaien.
 
 Na een update van de integratie moet je Home Assistant herstarten voordat de pagina verschijnt.

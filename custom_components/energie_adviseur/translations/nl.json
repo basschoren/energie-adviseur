@@ -309,6 +309,20 @@
         }
       }
     },
+    "delete_cycle": {
+      "name": "Cyclus verwijderen",
+      "description": "Verwijder een cyclus, bijvoorbeeld als dezelfde beurt twee keer is herkend. Historie inlezen haalt hem niet terug.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "Het apparaat."
+        },
+        "cycle_id": {
+          "name": "Cyclus",
+          "description": "Id van de cyclus."
+        }
+      }
+    },
     "split_cycle": {
       "name": "Cyclus splitsen",
       "description": "Deel een cyclus in tweeën, bijvoorbeeld als twee beurten als één zijn geteld.",
