@@ -12,7 +12,7 @@ De integratie geeft alleen advies; hij schakelt zelf niets.
 2. Installeer *Energie Adviseur* vanuit **Instellingen → Marketplace**.
 3. Ga naar **Instellingen → Apparaten & diensten → Integratie toevoegen** en zoek op *Energie Adviseur*.
 
-Op Home Assistant 2026.10 of ouder voeg je dezelfde repository in HACS toe als aangepaste repository van het type *Integratie*.
+Op Home Assistant 2026.10 voeg je dezelfde repository in HACS toe als aangepaste repository van het type *Integratie*.
 
 ### Handmatig
 

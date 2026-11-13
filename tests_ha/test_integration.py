@@ -274,3 +274,98 @@ async def test_heating(hass: HomeAssistant, freezer) -> None:
     assert advice.state == "airco"
     assert advice.attributes["airco_voordeliger"]
     assert "Verwarming" in advice.attributes["tekst"]
+
+
+HEATING = {
+    "gas_entity": "sensor.gas",
+    "indoor_entities": ["sensor.woonkamer"],
+    "outdoor_entity": "sensor.buiten",
+    "airco_entities": ["sensor.airco_energy"],
+    "gas_price": 1.30,
+    "boiler_eff_pct": 95,
+    "cop_7": 4.0,
+    "cop_minus7": 2.5,
+}
+
+
+async def test_heating_flow_and_options(hass: HomeAssistant) -> None:
+    set_prices(hass)
+    hass.states.async_set("sensor.gas", "1000.0", {"unit_of_measurement": "m³"})
+    hass.states.async_set("sensor.woonkamer", "20.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set("sensor.buiten", "5.0", {"unit_of_measurement": "°C"})
+    hass.states.async_set("sensor.airco_energy", "50.0", {"unit_of_measurement": "kWh"})
+    hub = await add(hass, HUB, "Energie Adviseur", "hub")
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "heating"})
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "heating"
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], HEATING)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["data"]["kind"] == "heating"
+    await hass.async_block_till_done()
+    heating = result["result"]
+
+    # een tweede verwarming kan niet
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "heating"})
+    assert result["type"] is FlowResultType.ABORT
+
+    # verwarming wijzigen
+    result = await hass.config_entries.options.async_init(heating.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "heating"
+    result = await hass.config_entries.options.async_configure(result["flow_id"], HEATING | {"gas_price": 1.45})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert heating.data["gas_price"] == 1.45
+    assert heating.data["kind"] == "heating"
+
+    # algemene instellingen wijzigen
+    result = await hass.config_entries.options.async_init(hub.entry_id)
+    assert result["type"] is FlowResultType.FORM
+    assert result["step_id"] == "hub"
+    changed = {k: v for k, v in HUB.items() if k != "kind"} | {"base_load_w": 450}
+    result = await hass.config_entries.options.async_configure(result["flow_id"], changed)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert hub.data["base_load_w"] == 450
+    assert hub.data["kind"] == "hub"
+
+
+async def test_washer_flow_links_dryer(hass: HomeAssistant) -> None:
+    set_prices(hass)
+    hass.states.async_set("sensor.droger_power", "0", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    dryer = await add(hass, appliance("Droger", "dryer", "sensor.droger_power"), "Droger", "sensor.droger_power")
+
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "appliance"})
+    assert result["type"] is FlowResultType.FORM
+    assert "dryer_entry" in {str(key) for key in result["data_schema"].schema}
+    data = {k: v for k, v in appliance("Wasmachine", "washer", "sensor.was_power").items() if k != "kind"}
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], data | {"dryer_entry": dryer.entry_id})
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    washer = result["result"]
+    assert washer.runtime_data.dryer is dryer.runtime_data
+
+    # dezelfde vermogenssensor kan niet twee keer
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": "user"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], {"next_step_id": "appliance"})
+    result = await hass.config_entries.flow.async_configure(result["flow_id"], data)
+    assert result["type"] is FlowResultType.ABORT
+
+    # wasmachine wijzigen: de droger blijft kiesbaar
+    result = await hass.config_entries.options.async_init(washer.entry_id)
+    assert result["step_id"] == "appliance"
+    assert "dryer_entry" in {str(key) for key in result["data_schema"].schema}
+    changed = {k: v for k, v in data.items() if k not in ("name", "appliance_type")}
+    result = await hass.config_entries.options.async_configure(
+        result["flow_id"], changed | {"dryer_entry": dryer.entry_id, "tolerance_pct": 20}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    await hass.async_block_till_done()
+    assert washer.data["tolerance_pct"] == 20
+    assert washer.data["dryer_entry"] == dryer.entry_id
