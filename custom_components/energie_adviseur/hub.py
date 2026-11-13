@@ -77,12 +77,12 @@ class HubManager:
     def collect_facts(self) -> list[str]:
         market = get_market(self.hass)
         facts: list[str] = []
-        prices = [(s, v) for s, e, v in market.prices() if e > time.time()]
+        prices = [(s, v, e) for s, e, v in market.prices() if e > time.time()]
         if prices:
             low, high = min(prices, key=lambda p: p[1]), max(prices, key=lambda p: p[1])
             facts.append(
                 f"Stroomprijs: laagst €{low[1]:.3f}/kWh om {fmt_time(low[0])}, hoogst €{high[1]:.3f}/kWh om "
-                f"{fmt_time(high[0])}; prijzen bekend tot {fmt_time(prices[-1][0] + 3600)}."
+                f"{fmt_time(high[0])}; prijzen bekend tot {fmt_time(prices[-1][2])}."
             )
         else:
             facts.append("Er is geen prijsvoorspelling beschikbaar; controleer de prijssensor.")

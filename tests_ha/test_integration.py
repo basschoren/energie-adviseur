@@ -369,3 +369,23 @@ async def test_washer_flow_links_dryer(hass: HomeAssistant) -> None:
     await hass.async_block_till_done()
     assert washer.data["tolerance_pct"] == 20
     assert washer.data["dryer_entry"] == dryer.entry_id
+
+
+async def test_quarter_hour_prices_known_until(hass: HomeAssistant) -> None:
+    """Kwartierprijzen in het formaat van Frank Energie: 'bekend tot' is het einde van het laatste blok."""
+    start = dt_util.now().replace(minute=0, second=0, microsecond=0)
+    blocks = [
+        {
+            "from": (start + timedelta(minutes=15 * i)).isoformat(),
+            "till": (start + timedelta(minutes=15 * (i + 1))).isoformat(),
+            "price": 0.30 + i / 1000,
+        }
+        for i in range(8)
+    ]
+    hass.states.async_set(PRICE, "0.30", {"unit_of_measurement": "€/kWh", "prices": blocks})
+    hub = await add(hass, HUB, "Energie Adviseur", "hub")
+    assert hass.states.get(entity(hass, hub, "current_price")).attributes["aantal_prijsblokken"] == 8
+    response = await hass.services.async_call(DOMAIN, "generate_advice", {}, blocking=True, return_response=True)
+    end = dt_util.as_local(start + timedelta(hours=2))
+    expected = ("" if end.date() == dt_util.now().date() else "morgen ") + end.strftime("%H:%M")
+    assert f"prijzen bekend tot {expected}." in response["advice"]
