@@ -614,21 +614,23 @@ class ApplianceManager:
         return min(inside, key=lambda o: o["end"] - o["start"], default=None)
 
     def _replace(self, new: list[Cycle]) -> list[dict[str, Any]]:
-        """Zet cycli terug en haal alles weg wat dezelfde tijd beslaat (de delen van een splitsing)."""
-        touched: set[str] = set()
+        """Zet cycli terug en haal alles weg wat dezelfde tijd beslaat (de delen van een splitsing).
+
+        Vervangt één cyclus precies één andere (opnieuw ophalen zonder splitsing), dan
+        houdt die zijn naam. Worden delen samengevoegd, dan vervallen hun namen.
+        """
+        replaced: list[Cycle] = []
         keep: list[Cycle] = []
         for existing in self.cycles:
-            if any(_same_run(existing.start, existing.end, c.start, c.end) for c in new):
-                if existing.program_id:
-                    touched.add(existing.program_id)
-            else:
-                keep.append(existing)
+            same = any(_same_run(existing.start, existing.end, c.start, c.end) for c in new)
+            (replaced if same else keep).append(existing)
+        one_to_one = len(new) == 1 and len(replaced) == 1
         for cycle in new:
-            cycle.program_id = None
+            cycle.program_id = replaced[0].program_id if one_to_one else None
             self.ignored.discard(cycle.cycle_id)
         self.removed = [r for r in self.removed if not any(_same_run(r[0], r[1], c.start, c.end) for c in new)]
         self.cycles = sorted(keep + new, key=lambda c: c.start)
-        for program_id in touched:
+        for program_id in {c.program_id for c in replaced if c.program_id}:
             if program_id in self.programs:
                 rebuild(self.programs[program_id], self.cycles)
         self._absorb_unlabeled()

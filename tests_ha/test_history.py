@@ -96,6 +96,16 @@ async def test_restore_cycle_from_recorder(hass: HomeAssistant, freezer) -> None
     await manager.async_import_history(1)
     imported = manager.cycles[0]
 
+    # een benoemde cyclus van voor 0.5 opnieuw ophalen: de naam en het programma blijven
+    imported.detail = []
+    manager.label_cycle("Eco 50")
+    await manager.async_restore_cycle(imported.cycle_id)
+    assert len(manager.cycles) == 1 and manager.cycles[0].step_s == 30
+    assert manager.program_name(manager.cycles[0].program_id) == "Eco 50"
+    assert manager.program_by_name("Eco 50").count == 1
+    manager.delete_program("Eco 50")
+    imported = manager.cycles[0]
+
     # zoals een cyclus van voor 0.5: alleen blokken van 5 minuten, gesplitst zonder bewaard origineel
     imported.detail = []
     manager.split_cycle(imported.cycle_id, minutes=20)
