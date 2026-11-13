@@ -518,6 +518,8 @@ class ApplianceManager:
         """Haal eerdere cycli uit de recorder (zolang die de ruwe metingen bewaart)."""
         from homeassistant.components.recorder import get_instance, history
 
+        if "recorder" not in self.hass.config.components:
+            raise HomeAssistantError("De recorder van Home Assistant is niet actief; er is geen historie om in te lezen")
         end = dt_util.utcnow()
         start = end - timedelta(days=days)
         result = await get_instance(self.hass).async_add_executor_job(

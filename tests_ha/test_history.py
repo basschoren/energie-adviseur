@@ -39,3 +39,25 @@ async def test_import_history(recorder_mock, hass: HomeAssistant, freezer) -> No
     )
     assert response == {"imported": 0}
     assert len(manager.cycles) == 1
+
+
+async def test_import_history_from_page(hass: HomeAssistant, hass_ws_client) -> None:
+    """Het bericht dat de zijbalkpagina stuurt voor 'Historie inlezen'."""
+    set_prices(hass)
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    hass.states.async_set("sensor.vw_power", "0", {"unit_of_measurement": "W"})
+    entry = await add(hass, appliance("Vaatwasser", "dishwasher", "sensor.vw_power"), "Vaatwasser", "sensor.vw_power")
+    ws = await hass_ws_client(hass)
+    await ws.send_json(
+        {
+            "id": 1,
+            "type": "call_service",
+            "domain": DOMAIN,
+            "service": "import_history",
+            "service_data": {"entry": entry.entry_id, "days": 10},
+            "return_response": True,
+        }
+    )
+    answer = await ws.receive_json()
+    assert answer["success"], answer
+    assert answer["result"]["response"] == {"imported": 0}

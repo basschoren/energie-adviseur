@@ -10,6 +10,7 @@ from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_interval
@@ -293,6 +294,8 @@ class HeatingManager:
         from homeassistant.components.recorder import get_instance
         from homeassistant.components.recorder.statistics import statistics_during_period
 
+        if "recorder" not in self.hass.config.components:
+            raise HomeAssistantError("De recorder van Home Assistant is niet actief; er is geen historie om in te lezen")
         end = dt_util.start_of_local_day()
         start = end - timedelta(days=days)
         outdoor_stat = None if self.outdoor.startswith("weather.") else self.outdoor

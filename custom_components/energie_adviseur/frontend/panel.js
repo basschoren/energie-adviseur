@@ -282,14 +282,11 @@ class EnergieAdviseurPanel extends HTMLElement {
     this._render();
   }
 
-  async _service(service, data) {
-    const result = await this._hass.callWS({
-      type: "call_service",
-      domain: DOMAIN,
-      service,
-      service_data: data,
-      return_response: true,
-    });
+  /** Roep een actie van de integratie aan. Alleen acties die een antwoord geven mogen erom vragen. */
+  async _service(service, data, wantResponse = false) {
+    const message = { type: "call_service", domain: DOMAIN, service, service_data: data };
+    if (wantResponse) message.return_response = true;
+    const result = await this._hass.callWS(message);
     return result?.response;
   }
 
@@ -644,7 +641,7 @@ class EnergieAdviseurPanel extends HTMLElement {
     } else if (action === "import") {
       const days = Math.min(730, Math.max(1, Math.round(Number(this._days) || 10)));
       this._run(
-        () => this._service("import_history", { entry: appliance.entry_id, days }),
+        () => this._service("import_history", { entry: appliance.entry_id, days }, true),
         (response) => this._t.imported(response?.imported ?? 0)
       );
     } else if (action === "save" && cycle) {
@@ -667,7 +664,7 @@ class EnergieAdviseurPanel extends HTMLElement {
       const data = { appliance: appliance.entry_id, cycle_id: cycle.cycle_id, keep: this._keep };
       if (this._marker.type === "at") data.minutes = (this._marker.idx * this._slot()) / 60;
       this._run(
-        () => this._service("split_cycle", data),
+        () => this._service("split_cycle", data, true),
         () => {
           this._marker = null;
           return this._t.splitDone;

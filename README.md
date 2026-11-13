@@ -148,5 +148,5 @@ Na elke cyclus vuurt de integratie de gebeurtenis `energie_adviseur_cycle_finish
 ## Ontwikkelen
 
 - `python -m unittest discover -s tests` test de rekenkern (geen Home Assistant nodig).
-- `pytest tests_ha` test de integratie tegen een Home Assistant-kern; hiervoor is `pytest-homeassistant-custom-component` nodig. Dit werkt alleen op Linux, macOS of WSL, niet op Windows zelf.
+- `pytest tests_ha` test de integratie tegen een Home Assistant-kern; hiervoor zijn `pytest-homeassistant-custom-component` en `home-assistant-frontend` nodig. Dit werkt alleen op Linux, macOS of WSL, niet op Windows zelf.
 - Bij elke push controleert GitHub Actions de repository met de HACS-actie, hassfest en beide testsets.

@@ -486,3 +486,46 @@ async def test_panel_and_cycles_websocket(hass: HomeAssistant, hass_client, hass
     assert not message["success"]
     assert message["error"]["code"] == "unauthorized"
 
+
+async def test_page_service_calls(hass: HomeAssistant, hass_ws_client) -> None:
+    """De exacte call_service-berichten die de zijbalkpagina stuurt."""
+    set_prices(hass)
+    hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    washer = await add(hass, appliance("Wasmachine", "washer", "sensor.was_power"), "Wasmachine", "sensor.was_power")
+    wm = washer.runtime_data
+    run_cycle(wm, WASH + [(20, 8)] + WASH)
+    cycle_id = wm.last_cycle.cycle_id
+    ws = await hass_ws_client(hass)
+
+    async def call(msg_id: int, service: str, data: dict, respond: bool) -> dict:
+        message = {"id": msg_id, "type": "call_service", "domain": DOMAIN, "service": service, "service_data": data}
+        if respond:
+            message["return_response"] = True
+        await ws.send_json(message)
+        answer = await ws.receive_json()
+        assert answer["success"], answer
+        return answer["result"]
+
+    result = await call(
+        1, "split_cycle", {"appliance": washer.entry_id, "cycle_id": cycle_id, "keep": "both", "minutes": 105}, True
+    )
+    assert len(result["response"]["cycles"]) == 2
+    await call(2, "label_cycle", {"appliance": washer.entry_id, "program": "Katoen 40", "cycle_id": cycle_id}, False)
+    assert wm.program_by_name("Katoen 40").count == 2
+
+    # zonder recorder (zoals in deze test) geeft inlezen een nette foutmelding
+    await ws.send_json(
+        {
+            "id": 3,
+            "type": "call_service",
+            "domain": DOMAIN,
+            "service": "import_history",
+            "service_data": {"entry": washer.entry_id, "days": 10},
+            "return_response": True,
+        }
+    )
+    answer = await ws.receive_json()
+    assert not answer["success"]
+    assert "recorder" in answer["error"]["message"]
+
