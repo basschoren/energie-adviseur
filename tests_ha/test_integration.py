@@ -437,3 +437,52 @@ async def test_split_cycle(hass: HomeAssistant) -> None:
     # een onmogelijk splitspunt geeft een nette fout
     with pytest.raises(HomeAssistantError):
         await hass.services.async_call(DOMAIN, "split_cycle", {"appliance": "Wasmachine", "minutes": 900}, blocking=True)
+
+
+async def test_panel_and_cycles_websocket(hass: HomeAssistant, hass_client, hass_ws_client, hass_admin_user) -> None:
+    set_prices(hass)
+    hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    washer = await add(hass, appliance("Wasmachine", "washer", "sensor.was_power"), "Wasmachine", "sensor.was_power")
+    wm = washer.runtime_data
+    run_cycle(wm, WASH)
+    wm.label_cycle("Katoen 40")
+
+    # de pagina staat in de zijbalk en het script is op te halen
+    panel = hass.data["frontend_panels"]["energie-adviseur"]
+    assert panel.sidebar_title == "Energie Adviseur"
+    assert panel.require_admin
+    module_url = panel.config["_panel_custom"]["module_url"]
+    assert module_url.startswith("/energie_adviseur_static/panel.js?v=")
+    client = await hass_client()
+    response = await client.get(module_url)
+    assert response.status == 200
+    assert "energie-adviseur-panel" in await response.text()
+
+    # herladen van een onderdeel registreert de pagina niet opnieuw
+    assert await hass.config_entries.async_reload(washer.entry_id)
+    await hass.async_block_till_done()
+
+    ws = await hass_ws_client(hass)
+    await ws.send_json({"id": 1, "type": "energie_adviseur/cycles"})
+    message = await ws.receive_json()
+    assert message["success"]
+    result = message["result"]
+    assert result["slot_s"] == 300
+    assert [a["name"] for a in result["appliances"]] == ["Wasmachine"]
+    found = result["appliances"][0]
+    assert found["entry_id"] == washer.entry_id
+    assert found["programs"][0]["name"] == "Katoen 40"
+    cycle = found["cycles"][0]
+    assert cycle["program"] == "Katoen 40"
+    assert len(cycle["profile"]) == 19
+    assert cycle["end"] - cycle["start"] == 95 * 60
+    assert cycle["quiet_gap"] is None or len(cycle["quiet_gap"]) == 2
+
+    # alleen beheerders mogen de cycli opvragen
+    hass_admin_user.groups = []
+    await ws.send_json({"id": 2, "type": "energie_adviseur/cycles"})
+    message = await ws.receive_json()
+    assert not message["success"]
+    assert message["error"]["code"] == "unauthorized"
+

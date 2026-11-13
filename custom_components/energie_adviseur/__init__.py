@@ -19,6 +19,7 @@ from .const import CONF_KIND, DOMAIN, KIND_APPLIANCE, KIND_HEATING, KIND_HUB
 from .heating import HeatingManager
 from .hub import HubManager
 from .market import Market
+from .panel import async_setup_panel
 
 PLATFORMS = [Platform.BINARY_SENSOR, Platform.NUMBER, Platform.SELECT, Platform.SENSOR, Platform.TEXT]
 CONFIG_SCHEMA = cv.config_entry_only_config_schema(DOMAIN)
@@ -108,6 +109,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     hass.services.async_register(
         DOMAIN, "generate_advice", generate_advice, vol.Schema({}), supports_response=SupportsResponse.OPTIONAL
     )
+    await async_setup_panel(hass)
     return True
 
 

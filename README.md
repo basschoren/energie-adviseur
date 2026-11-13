@@ -48,11 +48,23 @@ Dit is hoeveel een teruggeleverde kWh minder oplevert dan een afgenomen kWh kost
 
 Eerdere cycli inlezen kan met de dienst `energie_adviseur.import_history` (standaard de laatste 10 dagen; verder terug bewaart Home Assistant de ruwe metingen meestal niet). Onbekende cycli staan als attribuut bij de sensor *Laatste programma*; benoem er één per programma met `energie_adviseur.label_cycle` en de rest wordt automatisch meegenomen.
 
-### Cycli splitsen
+### De pagina Energie Adviseur
+
+In de zijbalk van Home Assistant staat de pagina **Energie Adviseur** (alleen voor beheerders). Per apparaat kun je daar:
+
+- **Historie inlezen**: kies het aantal dagen en klik op *Historie inlezen*.
+- **Cycli een naam geven**: typ een naam achter de cyclus of kies een eerder gebruikte naam uit de suggesties. Een nieuwe naam wordt als programma bewaard en staat de volgende keer in de lijst.
+- **Cycli splitsen**: klik in de grafiek op het moment waar geknipt moet worden. Je ziet de duur en het verbruik van beide delen voordat je bevestigt, en je kunt één deel laten vervallen. De oranje band is de rustigste periode; met *Rustigste periode gebruiken* knip je die er in één keer tussenuit.
+
+Splitsen gaat per 5 minuten, omdat het verbruik per blok van 5 minuten wordt bewaard. Een splitsing is niet terug te draaien.
+
+Na een update van de integratie moet je Home Assistant herstarten voordat de pagina verschijnt.
+
+### Cycli splitsen met een actie
 
 Soms telt de integratie twee beurten als één cyclus, bijvoorbeeld als je direct na elkaar wast of als het apparaat na afloop blijft nadraaien (kreukbeveiliging). Bij elke onbekende cyclus staat daarom een `rustigste_periode`: het moment midden in de cyclus waarop het verbruik het laagst was.
 
-Met de dienst `energie_adviseur.split_cycle` haal je zo'n cyclus uit elkaar:
+Zonder de pagina kan het ook, met de actie `energie_adviseur.split_cycle`:
 
 ```yaml
 action: energie_adviseur.split_cycle
