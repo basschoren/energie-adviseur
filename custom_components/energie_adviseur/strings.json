@@ -211,6 +211,15 @@
       "saving": {
         "name": "Saving versus starting now"
       },
+      "best_start_today": {
+        "name": "Best start time today"
+      },
+      "best_start_tomorrow": {
+        "name": "Best start time tomorrow"
+      },
+      "tomorrow_saving": {
+        "name": "Saving tomorrow versus today"
+      },
       "laundry_plan": {
         "name": "Laundry plan"
       },

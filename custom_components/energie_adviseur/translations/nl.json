@@ -211,6 +211,15 @@
       "saving": {
         "name": "Besparing t.o.v. nu starten"
       },
+      "best_start_today": {
+        "name": "Beste starttijd vandaag"
+      },
+      "best_start_tomorrow": {
+        "name": "Beste starttijd morgen"
+      },
+      "tomorrow_saving": {
+        "name": "Besparing morgen t.o.v. vandaag"
+      },
       "laundry_plan": {
         "name": "Wasplanning"
       },

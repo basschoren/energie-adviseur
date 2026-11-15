@@ -104,8 +104,12 @@ Wordt een programma niet herkend of verward met een ander, pas dan de *Toleranti
 Per apparaat:
 
 - **Programma voor advies**: kies wat je wilt draaien.
-- **Beste starttijd**, **Verwachte kosten**, **Besparing t.o.v. nu starten**.
+- **Beste starttijd**, **Verwachte kosten**, **Besparing t.o.v. nu starten**: het beste moment binnen alle bekende prijzen.
+- **Beste starttijd vandaag**: het beste moment dat vandaag begint (het programma mag na middernacht doorlopen). Leeg als er vandaag binnen je tijdvenster geen start meer past.
+- **Beste starttijd morgen** en **Besparing morgen t.o.v. vandaag**: zodra de prijzen van heel morgen bekend zijn (meestal 's middags). De besparing vergelijkt het beste moment morgen met het beste moment vandaag; is hij negatief, dan is vandaag goedkoper. De kosten van beide dagen staan als attributen bij de sensoren.
 - **Nu gunstig om te starten**: aan als nu starten hooguit 2 cent of 5% duurder is dan het beste moment.
+
+Het dagadvies wordt elke dag op het ingestelde tijdstip gemaakt en nog een keer zodra de prijzen van morgen binnen zijn. Dat tweede advies noemt per apparaat het beste moment vandaag en morgen, en wat je bespaart door tot morgen te wachten.
 
 Wasdag (bij de wasmachine):
 
@@ -144,6 +148,9 @@ entities:
   - entity: sensor.wasmachine_beste_starttijd
   - entity: sensor.wasmachine_verwachte_kosten
   - entity: sensor.wasmachine_besparing_t_o_v_nu_starten
+  - entity: sensor.wasmachine_beste_starttijd_vandaag
+  - entity: sensor.wasmachine_beste_starttijd_morgen
+  - entity: sensor.wasmachine_besparing_morgen_t_o_v_vandaag
   - entity: binary_sensor.wasmachine_nu_gunstig_om_te_starten
   - entity: number.wasmachine_aantal_wasjes_vandaag
   - entity: select.wasmachine_droogprogramma

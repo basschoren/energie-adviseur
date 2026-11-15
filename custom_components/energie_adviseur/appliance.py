@@ -44,7 +44,7 @@ from .const import (
 from .core import SLOT_S
 from .core.cycle_detector import OTHER, PAUSED, RUNNING, Cycle, CycleDetector, DetectorConfig, quiet_gap, split_cycle
 from .core.program_matcher import Program, match, rebuild
-from .core.scheduler import Advice, ChainPlan, best_start, plan_chain
+from .core.scheduler import Advice, ChainPlan, best_start, day_mask, plan_chain
 from .market import get_market, parse_time
 
 _LOGGER = logging.getLogger(__name__)
@@ -65,6 +65,11 @@ def fmt_time(ts: float) -> str:
     if local.date() == today + timedelta(days=1):
         return "morgen " + local.strftime("%H:%M")
     return local.strftime("%d-%m %H:%M")
+
+
+def fmt_clock(ts: float) -> str:
+    """Alleen de kloktijd, voor zinnen die de dag al noemen."""
+    return dt_util.as_local(dt_util.utc_from_timestamp(ts)).strftime("%H:%M")
 
 
 MAX_ORIGINALS = 50
@@ -104,7 +109,9 @@ class ApplianceManager:
         self.loads = 0
         self.pending_dry = 0
         self.dry_program: str | None = None
-        self.advice: Advice | None = None
+        self.advice: Advice | None = None  # beste start over alle bekende prijzen
+        self.advice_today: Advice | None = None  # beste start die vandaag begint
+        self.advice_tomorrow: Advice | None = None  # beste start morgen; alleen als de prijzen van morgen bekend zijn
         self.plan: ChainPlan | None = None
         self.signal = signal(entry.entry_id)
         self.device_info = DeviceInfo(
@@ -176,7 +183,7 @@ class ApplianceManager:
                 if watt is not None:
                     self.detector.last_power = watt * (1000.0 if power.attributes.get("unit_of_measurement") == "kW" else 1.0)
                 self._feed_state(time.time(), phase)
-        self._refresh_advice()
+        self.refresh_advice()
         self.hass.async_create_task(self.async_replan())
 
     async def async_stop(self) -> None:
@@ -248,7 +255,7 @@ class ApplianceManager:
             power = 0.0  # sensor te lang weg: cyclus afsluiten
         self._feed(time.time(), power)
         self._ticks += 1
-        self._refresh_advice()
+        self.refresh_advice()
         if self._ticks % 5 == 0:
             if self.detector.running:
                 self._save()
@@ -307,7 +314,7 @@ class ApplianceManager:
                 title="Energie Adviseur: onbekend programma",
                 notification_id=f"{DOMAIN}_{self.entry.entry_id}_unknown",
             )
-        self._refresh_advice()
+        self.refresh_advice()
         self.hass.async_create_task(self.async_replan())
         self.notify()
 
@@ -580,20 +587,34 @@ class ApplianceManager:
 
     def _changed(self) -> None:
         self._save()
-        self._refresh_advice()
+        self.refresh_advice()
         self.hass.async_create_task(self.async_replan())
         self.notify()
 
     # ------------------------------------------------------------ advies
 
-    def _refresh_advice(self) -> None:
+    def refresh_advice(self) -> None:
         program = self.active_program
-        grid = get_market(self.hass).grid()
+        market = get_market(self.hass)
+        grid = market.grid()
         if program is None or grid is None:
-            self.advice = None
+            self.advice = self.advice_today = self.advice_tomorrow = None
             return
-        allowed = get_market(self.hass).allowed(grid, *self.window)
+        allowed = market.allowed(grid, *self.window)
         self.advice = best_start(grid, program.profile, allowed)
+        self.advice_today = best_start(grid, program.profile, day_mask(grid, *market.day_bounds(0), allowed))
+        self.advice_tomorrow = (
+            best_start(grid, program.profile, day_mask(grid, *market.day_bounds(1), allowed))
+            if market.tomorrow_known(grid)
+            else None
+        )
+
+    @property
+    def tomorrow_saving(self) -> float | None:
+        """Hoeveel goedkoper morgen is dan vandaag, elk op het beste moment; negatief als vandaag goedkoper is."""
+        if self.advice_today is None or self.advice_tomorrow is None:
+            return None
+        return round(self.advice_today.cost - self.advice_tomorrow.cost, 4)
 
     @property
     def now_is_good(self) -> bool | None:
@@ -691,12 +712,25 @@ class ApplianceManager:
         program, advice = self.active_program, self.advice
         if program is None or advice is None:
             return None
-        text = (
-            f"{self.entry.title} ({program.name}, {fmt_duration(program.duration_s)}, "
-            f"{program.energy_kwh:.2f} kWh): beste start {fmt_time(advice.start)}, kosten ca. €{advice.cost:.2f}"
-        )
-        if advice.saving is not None and advice.saving > 0.005:
-            text += f", €{advice.saving:.2f} goedkoper dan nu starten"
+        text = f"{self.entry.title} ({program.name}, {fmt_duration(program.duration_s)}, {program.energy_kwh:.2f} kWh): "
+        today, tomorrow = self.advice_today, self.advice_tomorrow
+        if tomorrow is None:
+            text += f"beste start {fmt_time(advice.start)}, kosten ca. €{advice.cost:.2f}"
+            if advice.saving is not None and advice.saving > 0.005:
+                text += f", €{advice.saving:.2f} goedkoper dan nu starten"
+        else:
+            if today is None:
+                text += "vandaag past een start niet meer in je tijdvenster"
+            else:
+                text += f"vandaag het best om {fmt_clock(today.start)}, ca. €{today.cost:.2f}"
+            text += f"; morgen het best om {fmt_clock(tomorrow.start)}, ca. €{tomorrow.cost:.2f}"
+            saving = self.tomorrow_saving
+            if saving is not None and saving > 0.005:
+                text += f". Wacht je tot morgen, dan bespaar je ca. €{saving:.2f}"
+            elif saving is not None and saving < -0.005:
+                text += f". Vandaag is ca. €{-saving:.2f} goedkoper dan morgen"
+            elif saving is not None:
+                text += ". Vandaag en morgen kosten ongeveer hetzelfde"
         if self.is_washer and self.plan is not None:
             text += ". Wasplanning: " + "; ".join(s["tekst"] for s in self.plan_steps())
             text += f" (totaal ca. €{self.plan.cost:.2f})"

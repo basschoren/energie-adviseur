@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 import logging
 import time
 from typing import Any
@@ -26,7 +26,9 @@ AI_TIMEOUT_S = 900
 PROMPT = (
     "Je bent een energie-assistent voor een huishouden in Nederland. Schrijf een kort dagadvies in het Nederlands "
     "van hooguit 120 woorden, in gewone zinnen zonder opsomming. Gebruik uitsluitend de feiten hieronder en "
-    "verzin geen tijden of bedragen. Noem per apparaat het beste startmoment.\n\nFeiten:\n{facts}"
+    "verzin geen tijden of bedragen. Noem per apparaat het beste startmoment. Staan er voor een apparaat "
+    "een moment vandaag en een moment morgen, noem dan beide en zeg hoeveel je bespaart door tot morgen "
+    "te wachten, of dat vandaag goedkoper is.\n\nFeiten:\n{facts}"
 )
 
 
@@ -42,6 +44,7 @@ class HubManager:
         self.advice: str | None = None
         self.advice_source = "regels"
         self.generated: datetime | None = None
+        self._tomorrow_for: date | None = None  # dag waarop het dagadvies al met de prijzen van morgen is gemaakt
         self._unsub: list = []
         self._lock = asyncio.Lock()
 
@@ -63,7 +66,13 @@ class HubManager:
 
     @callback
     def _on_refresh(self, now: datetime) -> None:
-        self.hass.async_create_task(get_market(self.hass).async_refresh_solar())
+        market = get_market(self.hass)
+        self.hass.async_create_task(market.async_refresh_solar())
+        today = dt_util.now().date()
+        if self._tomorrow_for != today and market.tomorrow_known():
+            # de prijzen van morgen zijn binnen: dagadvies opnieuw, nu met vandaag én morgen
+            self._tomorrow_for = today
+            self.hass.async_create_task(self.async_generate())
         async_dispatcher_send(self.hass, self.signal)
 
     def managers(self) -> list[Any]:
@@ -87,6 +96,8 @@ class HubManager:
         else:
             facts.append("Er is geen prijsvoorspelling beschikbaar; controleer de prijssensor.")
         for manager in self.managers():
+            if isinstance(manager, ApplianceManager):
+                manager.refresh_advice()  # met de prijzen van dit moment, niet die van de vorige minuut
             text = manager.summary()
             if text:
                 facts.append(text)
@@ -94,7 +105,10 @@ class HubManager:
 
     async def async_generate(self) -> None:
         async with self._lock:
-            await get_market(self.hass).async_refresh_solar()
+            market = get_market(self.hass)
+            await market.async_refresh_solar()
+            if market.tomorrow_known():
+                self._tomorrow_for = dt_util.now().date()
             self.facts = self.collect_facts()
             self.advice = " ".join(self.facts)
             self.advice_source = "regels"

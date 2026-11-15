@@ -11,7 +11,7 @@ from core.cycle_detector import OTHER, PAUSED, RUNNING, CycleDetector, DetectorC
 from core.heating_model import DayRecord, cop_at, fit, hourly_advice, implied_cop  # noqa: E402
 from core.price import parse_intervals, price_scale  # noqa: E402
 from core.program_matcher import Program, match, rebuild  # noqa: E402
-from core.scheduler import best_start, build_grid, plan_chain  # noqa: E402
+from core.scheduler import best_start, build_grid, day_mask, plan_chain  # noqa: E402
 
 T0 = 1_800_000_000.0 - (1_800_000_000 % 3600)  # heel uur
 
@@ -192,6 +192,32 @@ class SchedulerTest(unittest.TestCase):
 
     def test_too_long_for_horizon(self):
         self.assertIsNone(best_start(build_grid(T0, hourly([0.2])), [1000.0] * 13))
+
+    def test_grid_end_and_day_mask(self):
+        grid = build_grid(T0, hourly([0.2] * 4))
+        self.assertEqual(grid.end, T0 + 4 * 3600)
+        mask = day_mask(grid, T0 + 3600, T0 + 2 * 3600)
+        self.assertEqual(sum(mask), 12)
+        self.assertTrue(mask[12])
+        self.assertFalse(mask[11] or mask[24])
+        allowed = [i % 2 == 0 for i in range(len(grid))]
+        self.assertEqual(sum(day_mask(grid, T0, T0 + 3600, allowed)), 6)
+
+    def test_best_start_per_day(self):
+        # 'vandaag' zijn de eerste 6 uur, 'morgen' de 6 uur daarna
+        prices = hourly([0.30, 0.30, 0.20, 0.20, 0.30, 0.30] + [0.30, 0.10, 0.10, 0.30, 0.30, 0.30])
+        grid = build_grid(T0, prices)
+        profile = [1000.0] * 24  # 2 uur, 1 kW
+        today = best_start(grid, profile, day_mask(grid, T0, T0 + 6 * 3600))
+        tomorrow = best_start(grid, profile, day_mask(grid, T0 + 6 * 3600, T0 + 12 * 3600))
+        self.assertEqual(today.start, T0 + 2 * 3600)
+        self.assertAlmostEqual(today.cost, 0.40, places=3)
+        self.assertEqual(tomorrow.start, T0 + 7 * 3600)
+        self.assertAlmostEqual(tomorrow.cost, 0.20, places=3)
+        # een start vlak voor middernacht mag doorlopen in de nacht: 15 min à 0,30 + 60 min à 0,30 + 45 min à 0,10
+        late = best_start(grid, profile, day_mask(grid, T0 + 5 * 3600, T0 + 6 * 3600))
+        self.assertEqual(late.start, T0 + 5 * 3600 + 45 * 60)
+        self.assertAlmostEqual(late.cost, 0.45, places=3)
 
 
 class ChainTest(unittest.TestCase):

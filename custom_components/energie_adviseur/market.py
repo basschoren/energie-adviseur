@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import time as dtime
+from datetime import time as dtime, timedelta
 import logging
 import time
 from typing import Any
@@ -147,6 +147,19 @@ class Market:
             float(hub.get(CONF_EXPORT_DEDUCTION) or 0.0),
         )
         return grid if len(grid) else None
+
+    @staticmethod
+    def day_bounds(offset: int) -> tuple[float, float]:
+        """Begin en einde (epoch) van vandaag (0) of morgen (1) in de tijdzone van Home Assistant."""
+        day = dt_util.now().date() + timedelta(days=offset)
+        start = dt_util.start_of_local_day(day)
+        end = dt_util.start_of_local_day(day + timedelta(days=1))
+        return start.timestamp(), end.timestamp()
+
+    def tomorrow_known(self, grid: Grid | None = None) -> bool:
+        """Zijn de prijzen van heel morgen bekend?"""
+        grid = grid if grid is not None else self.grid()
+        return grid is not None and grid.end >= self.day_bounds(1)[1]
 
     def allowed(self, grid: Grid, window_start: dtime, window_end: dtime) -> list[bool]:
         """Per blok: valt de starttijd binnen het venster waarin je het apparaat kunt aanzetten?"""

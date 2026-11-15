@@ -14,6 +14,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .appliance import ApplianceManager, fmt_duration
+from .core.scheduler import Advice
 from .entity import EAEntity
 from .heating import HeatingManager
 from .hub import HubManager
@@ -69,6 +70,22 @@ def _advice_attrs(m: ApplianceManager) -> dict[str, Any]:
     }
 
 
+def _day_attrs(m: ApplianceManager, advice: Advice | None) -> dict[str, Any]:
+    program = m.active_program
+    if program is None or advice is None:
+        return {}
+    attrs = {
+        "programma": program.name,
+        "klaar_om": _ts(advice.end).isoformat(),
+        "kosten": advice.cost,
+        "verbruik_kwh": advice.energy_kwh,
+    }
+    if advice is m.advice_today:
+        attrs["kosten_bij_nu_starten"] = advice.cost_now
+        attrs["besparing_t_o_v_nu_starten"] = advice.saving
+    return attrs
+
+
 APPLIANCE: tuple[EADescription, ...] = (
     EADescription(
         key="status",
@@ -102,6 +119,28 @@ APPLIANCE: tuple[EADescription, ...] = (
     ),
     EADescription(
         key="saving", native_unit_of_measurement="€", suggested_display_precision=2, value=lambda m: _advice(m, "saving")
+    ),
+    EADescription(
+        key="best_start_today",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value=lambda m: _ts(m.advice_today.start) if m.advice_today else None,
+        attrs=lambda m: _day_attrs(m, m.advice_today),
+    ),
+    EADescription(
+        key="best_start_tomorrow",
+        device_class=SensorDeviceClass.TIMESTAMP,
+        value=lambda m: _ts(m.advice_tomorrow.start) if m.advice_tomorrow else None,
+        attrs=lambda m: _day_attrs(m, m.advice_tomorrow),
+    ),
+    EADescription(
+        key="tomorrow_saving",
+        native_unit_of_measurement="€",
+        suggested_display_precision=2,
+        value=lambda m: m.tomorrow_saving,
+        attrs=lambda m: {
+            "kosten_vandaag": m.advice_today.cost if m.advice_today else None,
+            "kosten_morgen": m.advice_tomorrow.cost if m.advice_tomorrow else None,
+        },
     ),
     EADescription(
         key="laundry_plan",

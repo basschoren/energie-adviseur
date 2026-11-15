@@ -23,6 +23,11 @@ class Grid:
     def time(self, idx: int) -> float:
         return self.t0 + idx * SLOT_S
 
+    @property
+    def end(self) -> float:
+        """Einde van het laatste blok: tot hier zijn de prijzen bekend."""
+        return self.time(len(self.price))
+
     def aligned(self, idx: int) -> bool:
         """Valt blok idx op een heel kwartier?"""
         return int(self.t0 // SLOT_S + idx) % STEP == 0
@@ -60,6 +65,11 @@ def build_grid(
         surplus.append(max(0.0, (s or 0.0) - base_load_w))
         ts += SLOT_S
     return Grid(t0, price, surplus, export_deduction)
+
+
+def day_mask(grid: Grid, start: float, end: float, allowed: list[bool] | None = None) -> list[bool]:
+    """Per blok: begint het in [start, end) en mag er (volgens allowed) gestart worden?"""
+    return [start <= grid.time(i) < end and (allowed is None or allowed[i]) for i in range(len(grid))]
 
 
 def _slot_cost(grid: Grid, idx: int, load_w: float) -> float:

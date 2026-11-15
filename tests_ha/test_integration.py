@@ -3,11 +3,11 @@
 Draaien vanuit de projectmap: pytest tests_ha
 """
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 import time
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed
 
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -939,3 +939,76 @@ async def test_page_program_messages(hass: HomeAssistant, hass_ws_client) -> Non
     assert await hass.config_entries.async_reload(dryer.entry_id)
     await hass.async_block_till_done()
     assert dryer.runtime_data.program_names() == []
+
+
+def set_day_prices(hass: HomeAssistant, today: list[float], tomorrow: list[float] | None = None) -> None:
+    """Uurprijzen vanaf middernacht: heel vandaag en, als gegeven, heel morgen."""
+    start = dt_util.start_of_local_day()
+    raw = [
+        {"start": (start + timedelta(hours=i)).isoformat(), "end": (start + timedelta(hours=i + 1)).isoformat(), "value": v}
+        for i, v in enumerate(today + (tomorrow or []))
+    ]
+    hass.states.async_set(PRICE, "0.30", {"unit_of_measurement": "EUR/kWh", "raw_today": raw})
+
+
+async def test_advice_today_and_tomorrow(hass: HomeAssistant, freezer) -> None:
+    freezer.move_to(datetime(2026, 11, 18, 12, 0, tzinfo=dt_util.get_default_time_zone()))
+    today = [0.30] * 18 + [0.20, 0.20] + [0.30] * 4  # vandaag het goedkoopst 18:00-20:00
+    tomorrow = [0.30, 0.30, 0.10, 0.10] + [0.30] * 20  # morgen het goedkoopst 02:00-04:00
+    set_day_prices(hass, today)
+    hass.states.async_set("sensor.vw_power", "0", {"unit_of_measurement": "W"})
+    hub = await add(hass, HUB, "Energie Adviseur", "hub")
+    entry = await add(hass, appliance("Vaatwasser", "dishwasher", "sensor.vw_power"), "Vaatwasser", "sensor.vw_power")
+    manager = entry.runtime_data
+    run_cycle(manager, [(120, 1000)])  # 2 uur, 1 kW
+    await hass.services.async_call(DOMAIN, "label_cycle", {"appliance": entry.entry_id, "program": "Eco"}, blocking=True)
+    await hass.async_block_till_done()
+
+    def state(key):
+        return hass.states.get(entity(hass, entry, key))
+
+    def local(value):
+        return dt_util.as_local(dt_util.parse_datetime(value))
+
+    # alleen de prijzen van vandaag: advies voor vandaag, niets voor morgen
+    assert local(state("best_start_today").state).hour == 18
+    assert state("best_start_tomorrow").state == "unknown"
+    assert state("tomorrow_saving").state == "unknown"
+    assert "beste start 18:00" in manager.summary()
+
+    # prijzen van morgen binnen
+    set_day_prices(hass, today, tomorrow)
+    manager.refresh_advice()
+    manager.notify()
+    await hass.async_block_till_done()
+    first = local(state("best_start_today").state)
+    assert (first.date(), first.hour) == (dt_util.now().date(), 18)
+    second = local(state("best_start_tomorrow").state)
+    assert (second.date(), second.hour) == (dt_util.now().date() + timedelta(days=1), 2)
+    assert state("best_start_tomorrow").attributes["kosten"] == pytest.approx(0.20, abs=0.02)
+    saving = state("tomorrow_saving")
+    assert float(saving.state) == pytest.approx(0.20, abs=0.02)
+    assert saving.attributes["kosten_vandaag"] == pytest.approx(0.40, abs=0.02)
+    text = manager.summary()
+    assert "vandaag het best om 18:00" in text and "morgen het best om 02:00" in text
+    assert "Wacht je tot morgen, dan bespaar je ca. €0.2" in text
+
+    # de hub maakt het dagadvies één keer opnieuw zodra de prijzen van morgen bekend zijn
+    hub_manager = hub.runtime_data
+    assert hub_manager.generated is None
+    freezer.tick(timedelta(minutes=15))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hub_manager.generated is not None
+    assert "morgen het best om 02:00" in hass.states.get(entity(hass, hub, "daily_advice")).attributes["advies"]
+    generated = hub_manager.generated
+    freezer.tick(timedelta(minutes=15))
+    async_fire_time_changed(hass)
+    await hass.async_block_till_done()
+    assert hub_manager.generated == generated
+
+    # is vandaag goedkoper, dan zegt het advies dat
+    set_day_prices(hass, today, [0.30] * 24)
+    manager.refresh_advice()
+    assert manager.tomorrow_saving == pytest.approx(-0.20, abs=0.02)
+    assert "Vandaag is ca. €0.2" in manager.summary()
