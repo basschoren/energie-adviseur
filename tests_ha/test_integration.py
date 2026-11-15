@@ -666,6 +666,28 @@ async def test_state_sensor_controls_cycle(hass: HomeAssistant, freezer) -> None
     assert len(manager.cycles) == 2
     assert manager.last_cycle.duration_s == pytest.approx(20 * 60, abs=1)
 
+    # tijdens een pauze alvast een naam geven: na afloop krijgt de cyclus die naam
+    async def name(program: str) -> None:
+        await hass.services.async_call(
+            DOMAIN, "label_running_cycle", {"appliance": entry.entry_id, "program": program}, blocking=True
+        )
+
+    await step("Running", 1500, 20)
+    await step("Paused", 4, 5)
+    await name("Snel 45")
+    await step("Running", 1500, 10)
+    await step("Idle", 2, 1)
+    assert len(manager.cycles) == 3
+    assert manager.program_name(manager.last_cycle.program_id) == "Snel 45"
+    assert manager.last_cycle.paused_s == pytest.approx(5 * 60, abs=1)
+
+    # de volgende beurt dezelfde naam: de verwachte eindtijd volgt dan dat programma
+    await step("Running", 1500, 5)
+    assert manager._busy_until(None) == pytest.approx(time.time(), abs=1)
+    await name("snel 45")
+    program = manager.program_by_name("Snel 45")
+    assert manager._busy_until(None) == pytest.approx(manager.detector.start + program.duration_s)
+
 
 async def test_state_sensor_running_at_startup(hass: HomeAssistant, freezer) -> None:
     set_prices(hass)
