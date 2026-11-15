@@ -64,6 +64,8 @@ In de zijbalk van Home Assistant staat de pagina **Energie Adviseur** (alleen vo
 
 - **Historie inlezen**: kies het aantal dagen en klik op *Historie inlezen*.
 - **Cycli een naam geven**: typ een naam achter de cyclus of kies een eerder gebruikte naam uit de suggesties. Een nieuwe naam wordt als programma bewaard en staat de volgende keer in de lijst.
+- **Een lopend programma alvast benoemen**: draait het apparaat, dan staat bovenaan de kaart *Draait nu*. Typ daar welk programma je hebt gestart; zodra de cyclus klaar is krijgt hij die naam, ook als de integratie het programma anders niet had herkend. Met *Naam wissen* laat je het weer aan de herkenning over. Zonder de pagina kan het met de actie `energie_adviseur.label_running_cycle`.
+- **Programma's hernoemen of verwijderen**: klik bij *Geleerde programma's* op een programma. Geef je het de naam van een ander programma, dan vraagt de pagina of je ze wilt samenvoegen; de cycli komen dan bij elkaar. Verwijder je een programma, dan staan de cycli ervan weer bij *Zonder naam*.
 - **Cycli splitsen**: klik in de grafiek op het moment waar geknipt moet worden. Je ziet de duur en het verbruik van beide delen voordat je bevestigt, en je kunt één deel laten vervallen. De oranje band is de rustigste periode; met *Rustigste periode gebruiken* knip je die er in één keer tussenuit.
 
 - **Cycli verwijderen**: met *Verwijderen* haal je een cyclus weg, bijvoorbeeld als dezelfde beurt twee keer is herkend. Het programma wordt opnieuw berekend en historie inlezen haalt de cyclus niet terug.

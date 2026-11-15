@@ -12,6 +12,16 @@ label_cycle:
     cycle_id:
       selector:
         text:
+label_running_cycle:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    program:
+      selector:
+        text:
 rename_program:
   fields:
     appliance:
@@ -27,6 +37,10 @@ rename_program:
       required: true
       selector:
         text:
+    merge:
+      default: false
+      selector:
+        boolean:
 delete_program:
   fields:
     appliance:

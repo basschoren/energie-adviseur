@@ -44,8 +44,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def label_cycle(call: ServiceCall) -> None:
         _manager(hass, call.data["appliance"], ApplianceManager).label_cycle(call.data["program"], call.data.get("cycle_id"))
 
+    async def label_running_cycle(call: ServiceCall) -> None:
+        _manager(hass, call.data["appliance"], ApplianceManager).label_running(call.data["program"])
+
     async def rename_program(call: ServiceCall) -> None:
-        _manager(hass, call.data["appliance"], ApplianceManager).rename_program(call.data["program"], call.data["new_name"])
+        manager = _manager(hass, call.data["appliance"], ApplianceManager)
+        manager.rename_program(call.data["program"], call.data["new_name"], call.data["merge"])
 
     async def delete_program(call: ServiceCall) -> None:
         _manager(hass, call.data["appliance"], ApplianceManager).delete_program(call.data["program"])
@@ -83,9 +87,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.services.async_register(
         DOMAIN,
+        "label_running_cycle",
+        label_running_cycle,
+        vol.Schema({**appliance, vol.Optional("program", default=""): cv.string}),
+    )
+    hass.services.async_register(
+        DOMAIN,
         "rename_program",
         rename_program,
-        vol.Schema({**appliance, vol.Required("program"): cv.string, vol.Required("new_name"): cv.string}),
+        vol.Schema(
+            {
+                **appliance,
+                vol.Required("program"): cv.string,
+                vol.Required("new_name"): cv.string,
+                vol.Optional("merge", default=False): cv.boolean,
+            }
+        ),
     )
     hass.services.async_register(
         DOMAIN, "delete_program", delete_program, vol.Schema({**appliance, vol.Required("program"): cv.string})

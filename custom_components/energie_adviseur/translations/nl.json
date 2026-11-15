@@ -293,6 +293,20 @@
         }
       }
     },
+    "label_running_cycle": {
+      "name": "Lopende cyclus benoemen",
+      "description": "Geef het programma dat nu draait een naam. De naam wordt aan de cyclus gekoppeld zodra die klaar is.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "Het apparaat."
+        },
+        "program": {
+          "name": "Programma",
+          "description": "Naam van het programma; leeg wist de eerder gekozen naam."
+        }
+      }
+    },
     "rename_program": {
       "name": "Programma hernoemen",
       "description": "Geef een geleerd programma een andere naam.",
@@ -308,6 +322,10 @@
         "new_name": {
           "name": "Nieuwe naam",
           "description": "Nieuwe naam."
+        },
+        "merge": {
+          "name": "Samenvoegen",
+          "description": "Heeft een ander programma de nieuwe naam al, voeg ze dan samen: de cycli komen bij elkaar en dit programma vervalt."
         }
       }
     },

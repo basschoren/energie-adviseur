@@ -71,6 +71,16 @@ def appliance_payload(manager: ApplianceManager) -> dict[str, Any]:
         "name": manager.entry.title,
         "type": manager.appliance_type,
         "running": manager.detector.running,
+        # de cyclus die nu loopt, met de naam die hij alvast heeft gekregen
+        "current": (
+            {
+                "start": manager.detector.start,
+                "energy_kwh": round(manager.detector.energy_kwh, 3),
+                "program": manager.running_program_name,
+            }
+            if manager.detector.running
+            else None
+        ),
         "programs": [
             {"name": p.name, "count": p.count, "duration_s": p.duration_s, "energy_kwh": p.energy_kwh}
             for p in sorted(manager.programs.values(), key=lambda p: p.name.casefold())

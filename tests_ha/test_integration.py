@@ -742,3 +742,178 @@ async def test_switching_to_state_sensor_drops_running_measurement(hass: HomeAss
     assert manager.detector.config.state_mode
     assert not manager.detector.running and manager.detector.start is None
     assert manager.cycles == []
+
+
+async def test_name_running_cycle(hass: HomeAssistant, freezer) -> None:
+    """Een programma dat nog draait alvast een naam geven: die gaat mee met de cyclus als die klaar is."""
+    from custom_components.energie_adviseur.panel import appliance_payload
+
+    set_prices(hass)
+    hass.states.async_set("sensor.vw_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    entry = await add(hass, appliance("Vaatwasser", "dishwasher", "sensor.vw_power"), "Vaatwasser", "sensor.vw_power")
+    manager = entry.runtime_data
+    status = entity(hass, entry, "status")
+    finished = []
+    hass.bus.async_listen(f"{DOMAIN}_cycle_finished", lambda event: finished.append(event.data))
+
+    async def power(watt: float) -> None:
+        hass.states.async_set("sensor.vw_power", str(watt), {"unit_of_measurement": "W"})
+        await hass.async_block_till_done()
+
+    async def minutes(count: int) -> None:
+        for _ in range(count):
+            freezer.tick(60)
+            entry.runtime_data._on_tick(dt_util.utcnow())
+        await hass.async_block_till_done()
+
+    async def name(program: str | None) -> None:
+        data = {"appliance": "Vaatwasser"} | ({} if program is None else {"program": program})
+        await hass.services.async_call(DOMAIN, "label_running_cycle", data, blocking=True)
+        await hass.async_block_till_done()
+
+    async def run(before: int, after: int, program: str | None = None) -> None:
+        """Een beurt van before + after minuten op 1800 W; halverwege eventueel een naam geven."""
+        await power(1800)
+        await minutes(before)
+        if program is not None:
+            await name(program)
+        await minutes(after)
+        await power(1)
+        await minutes(7)
+
+    # er draait niets: alvast benoemen kan niet
+    with pytest.raises(HomeAssistantError, match="draait nu niet"):
+        await name("Eco")
+    assert appliance_payload(manager)["current"] is None
+
+    # tijdens de beurt een nieuwe naam geven; het programma ontstaat pas als de cyclus klaar is
+    await power(1800)
+    await minutes(5)
+    await name("Eco")
+    assert hass.states.get(status).attributes["programma"] == "Eco"
+    current = appliance_payload(manager)["current"]
+    assert current["program"] == "Eco" and current["start"] == manager.detector.start
+    assert manager.program_names() == []
+
+    # de naam overleeft een herstart midden in de beurt
+    assert await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    manager = entry.runtime_data
+    assert manager.detector.running and manager.running_program_name == "Eco"
+
+    await minutes(25)
+    await power(1)
+    await minutes(7)
+    assert not manager.detector.running
+    assert manager.program_name(manager.last_cycle.program_id) == "Eco"
+    assert manager.program_by_name("Eco").count == 1
+    assert manager.running_name is None
+    assert finished[-1]["program"] == "Eco"
+    assert hass.states.get(status).attributes["programma"] is None
+
+    # een bestaand programma, anders geschreven; hernoemen tijdens de beurt neemt de naam mee
+    await power(1800)
+    await minutes(5)
+    await name("eco")
+    assert manager.running_program_name == "Eco"
+    await hass.services.async_call(
+        DOMAIN, "rename_program", {"appliance": "Vaatwasser", "program": "Eco", "new_name": "Eco 50"}, blocking=True
+    )
+    assert manager.running_program_name == "Eco 50"
+    await minutes(25)
+    await power(1)
+    await minutes(7)
+    assert manager.program_names() == ["Eco 50"]
+    assert manager.program_by_name("Eco 50").count == 2
+
+    # een beurt die te kort is voor een cyclus: de naam vervalt en gaat niet naar de volgende beurt
+    await run(3, 0, "Kort")
+    assert manager.running_name is None
+    assert len(manager.cycles) == 2
+    await run(10, 2)
+    assert len(manager.cycles) == 3
+    assert manager.program_name(manager.last_cycle.program_id) != "Kort"
+    assert "Kort" not in manager.program_names()
+
+    # een gekozen naam weer wissen: dan wordt het programma gewoon herkend
+    await power(1800)
+    await minutes(5)
+    await name("Iets anders")
+    await name(None)
+    assert manager.running_program_name is None
+    await minutes(25)
+    await power(1)
+    await minutes(7)
+    assert manager.program_name(manager.last_cycle.program_id) == "Eco 50"
+    assert "Iets anders" not in manager.program_names()
+
+
+async def test_page_program_messages(hass: HomeAssistant, hass_ws_client) -> None:
+    """Programma's hernoemen, samenvoegen en verwijderen met de berichten die de pagina stuurt."""
+    set_prices(hass)
+    hass.states.async_set("sensor.droger_power", "0", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    dryer = await add(hass, appliance("Droger", "dryer", "sensor.droger_power"), "Droger", "sensor.droger_power")
+    washer = await add(
+        hass,
+        appliance("Wasmachine", "washer", "sensor.was_power", dryer_entry=dryer.entry_id),
+        "Wasmachine",
+        "sensor.was_power",
+    )
+    dm, wm = dryer.runtime_data, washer.runtime_data
+    run_cycle(dm, DRY)
+    run_cycle(dm, DRY)
+    first, second = (c.cycle_id for c in dm.cycles)
+    dm.label_cycle("Kastdroog", first)
+    dm.label_cycle("Strijkdroog", second)
+    dm.select_program("Strijkdroog")
+    wm.set_dry_program("Strijkdroog")
+    ws = await hass_ws_client(hass)
+    ids = iter(range(1, 100))
+
+    async def call(service: str, data: dict) -> dict:
+        message = {"id": next(ids), "type": "call_service", "domain": DOMAIN, "service": service, "service_data": data}
+        await ws.send_json(message)
+        return await ws.receive_json()
+
+    # alvast benoemen kan alleen als het apparaat draait
+    answer = await call("label_running_cycle", {"appliance": dryer.entry_id, "program": "Kastdroog"})
+    assert not answer["success"] and "draait nu niet" in answer["error"]["message"]
+
+    # hernoemen naar een naam die al bestaat vraagt om samenvoegen
+    answer = await call("rename_program", {"appliance": dryer.entry_id, "program": "Strijkdroog", "new_name": "kastdroog"})
+    assert not answer["success"] and "samenvoegen" in answer["error"]["message"]
+    assert dm.program_names() == ["Kastdroog", "Strijkdroog"]
+
+    answer = await call(
+        "rename_program", {"appliance": dryer.entry_id, "program": "Strijkdroog", "new_name": "Kastdroog", "merge": True}
+    )
+    assert answer["success"], answer
+    target = dm.program_by_name("Kastdroog")
+    assert dm.program_names() == ["Kastdroog"] and target.count == 2
+    assert all(c.program_id == target.program_id for c in dm.cycles)
+    assert dm.selected == target.program_id
+    assert wm.dry_program == target.program_id
+
+    # alleen hoofdletters aanpassen mag, gewoon hernoemen ook; een lege naam niet
+    answer = await call("rename_program", {"appliance": dryer.entry_id, "program": "Kastdroog", "new_name": "KASTDROOG"})
+    assert answer["success"], answer
+    answer = await call("rename_program", {"appliance": dryer.entry_id, "program": "kastdroog", "new_name": "Kastdroog+"})
+    assert answer["success"], answer
+    assert dm.program_names() == ["Kastdroog+"]
+    answer = await call("rename_program", {"appliance": dryer.entry_id, "program": "Kastdroog+", "new_name": "  "})
+    assert not answer["success"]
+
+    # verwijderen: de cycli worden weer onbekend en de wasmachine verwijst er niet meer naar
+    answer = await call("delete_program", {"appliance": dryer.entry_id, "program": "Kastdroog+"})
+    assert answer["success"], answer
+    assert dm.program_names() == []
+    assert all(c.program_id is None for c in dm.cycles)
+    assert wm.dry_program is None
+
+    # na herladen is alles nog zo
+    assert await hass.config_entries.async_reload(dryer.entry_id)
+    await hass.async_block_till_done()
+    assert dryer.runtime_data.program_names() == []

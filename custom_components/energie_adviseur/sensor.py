@@ -78,6 +78,7 @@ APPLIANCE: tuple[EADescription, ...] = (
         attrs=lambda m: {
             "gestart": _ts(m.detector.start).isoformat() if m.detector.running else None,
             "verbruik_tot_nu_kwh": round(m.detector.energy_kwh, 3) if m.detector.running else None,
+            "programma": m.running_program_name,
         },
     ),
     EADescription(key="last_program", value=_last_program, attrs=_program_attrs),

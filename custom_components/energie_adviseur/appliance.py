@@ -99,6 +99,8 @@ class ApplianceManager:
         self.removed: list[list[float]] = []  # [start, eind] van verwijderde cycli; inlezen slaat ze over
         self.originals: list[dict[str, Any]] = []  # cycli van voor een splitsing, om die ongedaan te maken
         self.selected: str | None = None
+        # naam die de cyclus die nu loopt alvast heeft gekregen: {"name": ..., "start": begin van die cyclus}
+        self.running_name: dict[str, Any] | None = None
         self.loads = 0
         self.pending_dry = 0
         self.dry_program: str | None = None
@@ -147,6 +149,7 @@ class ApplianceManager:
         self.removed = [list(r) for r in stored.get("removed", [])]
         self.originals = list(stored.get("originals", []))
         self.selected = stored.get("selected")
+        self.running_name = stored.get("running_name")
         self.loads = int(stored.get("loads", 0))
         self.pending_dry = int(stored.get("pending_dry", 0))
         self.dry_program = stored.get("dry_program")
@@ -189,6 +192,7 @@ class ApplianceManager:
             "removed": self.removed[-MAX_CYCLES:],
             "originals": self.originals[-MAX_ORIGINALS:],
             "selected": self.selected,
+            "running_name": self.running_name,
             "loads": self.loads,
             "pending_dry": self.pending_dry,
             "dry_program": self.dry_program,
@@ -235,9 +239,7 @@ class ApplianceManager:
             self.notify()
 
     def _feed_state(self, ts: float, phase: str) -> None:
-        cycle = self.detector.update_state(ts, phase)
-        if cycle is not None:
-            self._handle_cycle(cycle)
+        self._after_update(self.detector.update_state(ts, phase))
 
     @callback
     def _on_tick(self, now: datetime) -> None:
@@ -254,18 +256,30 @@ class ApplianceManager:
         self.notify()
 
     def _feed(self, ts: float, power: float | None) -> None:
-        cycle = self.detector.update(ts, power)
+        self._after_update(self.detector.update(ts, power))
+
+    def _after_update(self, cycle: Cycle | None) -> None:
         if cycle is not None:
             self._handle_cycle(cycle)
+        elif self.running_name is not None and not self.detector.running:
+            # de beurt is gestopt zonder bruikbare cyclus (te kort, te weinig verbruik): naam vervalt
+            self.running_name = None
+            self._save()
 
     def _handle_cycle(self, cycle: Cycle, quiet: bool = False) -> None:
-        result = match(cycle, list(self.programs.values()), self.tolerance)
-        if result.program is not None:
-            cycle.program_id = result.program.program_id
+        named = None if quiet else self._take_running_name(cycle)
+        if named is not None:
+            program: Program | None = self._program_for(named)  # de gekozen naam gaat voor herkenning
+        else:
+            program = match(cycle, list(self.programs.values()), self.tolerance).program
+        if program is not None:
+            cycle.program_id = program.program_id
         self.cycles.append(cycle)
         self.cycles = self.cycles[-MAX_CYCLES:]
-        if result.program is not None:
-            rebuild(result.program, self.cycles)
+        if program is not None:
+            rebuild(program, self.cycles)
+        if named is not None:
+            self._absorb_unlabeled()
         if quiet:
             return
         if self.is_washer and self.loads > 0:
@@ -278,12 +292,12 @@ class ApplianceManager:
                 "entry_id": self.entry.entry_id,
                 "name": self.entry.title,
                 "cycle_id": cycle.cycle_id,
-                "program": result.program.name if result.program else None,
+                "program": program.name if program else None,
                 "duration_min": round(cycle.duration_s / 60),
                 "energy_kwh": cycle.energy_kwh,
             },
         )
-        if result.program is None:
+        if program is None:
             persistent_notification.async_create(
                 self.hass,
                 f"{self.entry.title} draaide een programma dat ik nog niet ken "
@@ -351,10 +365,7 @@ class ApplianceManager:
         cycle = self.last_cycle if cycle_id is None else next((c for c in self.cycles if c.cycle_id == cycle_id), None)
         if cycle is None:
             raise HomeAssistantError("Geen cyclus gevonden om te benoemen")
-        program = self.program_by_name(name)
-        if program is None:
-            program = Program(uuid.uuid4().hex[:8], name)
-            self.programs[program.program_id] = program
+        program = self._program_for(name)
         previous = self.programs.get(cycle.program_id or "")
         cycle.program_id = program.program_id
         rebuild(program, self.cycles)
@@ -376,13 +387,53 @@ class ApplianceManager:
         for program_id in touched:
             rebuild(self.programs[program_id], self.cycles)
 
-    def rename_program(self, name: str, new_name: str) -> None:
+    def _program_for(self, name: str) -> Program:
+        """Het programma met deze naam; bestaat het nog niet, dan wordt het aangemaakt."""
         program = self.program_by_name(name)
-        if program is None or not new_name.strip():
+        if program is None:
+            program = Program(uuid.uuid4().hex[:8], name.strip())
+            self.programs[program.program_id] = program
+        return program
+
+    def rename_program(self, name: str, new_name: str, merge: bool = False) -> None:
+        """Geef een programma een andere naam.
+
+        Heeft een ander programma die naam al, dan worden ze met `merge` samengevoegd:
+        de cycli gaan naar het bestaande programma en dit programma vervalt.
+        """
+        program = self.program_by_name(name)
+        if program is None:
             raise HomeAssistantError(f"Onbekend programma: {name}")
-        if self.program_by_name(new_name) not in (None, program):
-            raise HomeAssistantError(f"Er bestaat al een programma met de naam {new_name}")
-        program.name = new_name.strip()
+        new_name = new_name.strip()
+        if not new_name:
+            raise HomeAssistantError("Geef een nieuwe naam op")
+        other = self.program_by_name(new_name)
+        if other is not None and other is not program:
+            if not merge:
+                raise HomeAssistantError(
+                    f"Er bestaat al een programma met de naam {other.name}; kies samenvoegen om ze samen te voegen"
+                )
+            self._merge_program(program, other)
+            return
+        old = program.name
+        program.name = new_name
+        self._rename_running(old, new_name)
+        self._changed()
+
+    def _merge_program(self, source: Program, target: Program) -> None:
+        for cycle in self.cycles:
+            if cycle.program_id == source.program_id:
+                cycle.program_id = target.program_id
+        del self.programs[source.program_id]
+        if self.selected == source.program_id:
+            self.selected = target.program_id
+        for washer in self._washers():
+            if washer.dry_program == source.program_id:
+                washer.dry_program = target.program_id
+                washer._changed()
+        self._rename_running(source.name, target.name)
+        rebuild(target, self.cycles)
+        self._absorb_unlabeled()
         self._changed()
 
     def delete_program(self, name: str) -> None:
@@ -395,7 +446,54 @@ class ApplianceManager:
                 cycle.program_id = None
         if self.selected == program.program_id:
             self.selected = None
+        for washer in self._washers():
+            if washer.dry_program == program.program_id:
+                washer.dry_program = None
+                washer._changed()
+        if self.running_name is not None and self.running_name["name"].casefold() == program.name.casefold():
+            self.running_name = None
         self._changed()
+
+    def _washers(self) -> list[ApplianceManager]:
+        """Wasmachines die dit apparaat als droger gebruiken."""
+        managers = (getattr(e, "runtime_data", None) for e in self.hass.config_entries.async_entries(DOMAIN))
+        return [m for m in managers if isinstance(m, ApplianceManager) and m.is_washer and m.dryer is self]
+
+    # ------------------------------------------------------------ lopende cyclus
+
+    @property
+    def running_program_name(self) -> str | None:
+        """De naam die de cyclus die nu loopt alvast heeft gekregen."""
+        pending, detector = self.running_name, self.detector
+        if pending is None or not detector.running or detector.start is None:
+            return None
+        return pending["name"] if int(pending["start"]) == int(detector.start) else None
+
+    def label_running(self, name: str | None) -> None:
+        """Geef de cyclus die nu loopt alvast een naam; die wordt gekoppeld zodra de cyclus klaar is.
+
+        Een lege naam wist de gekozen naam, dan wordt het programma na afloop weer gewoon herkend.
+        """
+        if not self.detector.running or self.detector.start is None:
+            raise HomeAssistantError(f"{self.entry.title} draait nu niet")
+        name = (name or "").strip()
+        if name:
+            existing = self.program_by_name(name)
+            self.running_name = {"name": existing.name if existing else name, "start": self.detector.start}
+        else:
+            self.running_name = None
+        self._changed()
+
+    def _take_running_name(self, cycle: Cycle) -> str | None:
+        """De gekozen naam voor deze cyclus, als die bij precies deze beurt hoort; daarna is hij gebruikt."""
+        pending, self.running_name = self.running_name, None
+        if pending is not None and str(int(pending["start"])) == cycle.cycle_id:
+            return pending["name"]
+        return None
+
+    def _rename_running(self, old: str, new: str) -> None:
+        if self.running_name is not None and self.running_name["name"].casefold() == old.casefold():
+            self.running_name = {**self.running_name, "name": new}
 
     def _describe(self, cycle: Cycle) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -522,6 +620,10 @@ class ApplianceManager:
     def _busy_until(self, program: Program | None) -> float | None:
         if not self.detector.running or self.detector.start is None:
             return None
+        # heeft de lopende cyclus al een naam, dan is bekend welk programma draait
+        running = self.program_by_name(self.running_program_name)
+        if running is not None and running.count:
+            program = running
         expected = self.detector.start + (program.duration_s if program else 0)
         return max(expected, time.time())
 

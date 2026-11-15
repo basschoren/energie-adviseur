@@ -293,6 +293,20 @@
         }
       }
     },
+    "label_running_cycle": {
+      "name": "Name running cycle",
+      "description": "Name the programme that is running now. The name is linked to the cycle as soon as it has finished.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance."
+        },
+        "program": {
+          "name": "Programme",
+          "description": "Programme name; empty clears the name chosen earlier."
+        }
+      }
+    },
     "rename_program": {
       "name": "Rename programme",
       "description": "Give a learned programme another name.",
@@ -308,6 +322,10 @@
         "new_name": {
           "name": "New name",
           "description": "New name."
+        },
+        "merge": {
+          "name": "Merge",
+          "description": "If another programme already has the new name, merge both: its cycles are combined and this programme disappears."
         }
       }
     },

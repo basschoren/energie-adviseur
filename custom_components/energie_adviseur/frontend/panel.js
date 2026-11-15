@@ -59,6 +59,30 @@ const TEXT = {
     running: "draait nu",
     paused: (duration) => `${duration} pauze niet meegeteld`,
     peak: "piek",
+    programsHint: "Klik op een programma om de naam aan te passen of het te verwijderen.",
+    editProgram: (name) => `${name} aanpassen`,
+    newName: "Naam",
+    rename: "Naam opslaan",
+    renamed: (old, name) => `‘${old}’ heet nu ‘${name}’.`,
+    mergeAsk: (old, name) =>
+      `Er is al een programma ‘${name}’. Samenvoegen? De cycli van ‘${old}’ komen dan bij ‘${name}’ en ‘${old}’ vervalt.`,
+    mergeYes: "Ja, samenvoegen",
+    merged: (old, name) => `‘${old}’ is samengevoegd met ‘${name}’.`,
+    deleteProgram: "Programma verwijderen",
+    deleteProgramAsk: (name, n) =>
+      `Programma ‘${name}’ verwijderen? ` +
+      (n === 0
+        ? "Er zijn geen cycli met deze naam."
+        : n === 1
+          ? "De cyclus met deze naam staat daarna weer bij ‘Zonder naam’."
+          : `De ${n} cycli met deze naam staan daarna weer bij ‘Zonder naam’.`),
+    programDeleted: (name) => `Programma ‘${name}’ verwijderd.`,
+    runningTitle: "Draait nu",
+    runningSince: (when, kwh) => `gestart ${when} · ${kwh} tot nu toe`,
+    runningHint: "Geef het programma alvast een naam. De naam wordt aan de cyclus gekoppeld zodra die klaar is.",
+    runningSaved: (name) => `Na afloop wordt de cyclus opgeslagen als ‘${name}’.`,
+    runningClear: "Naam wissen",
+    runningCleared: "Naam gewist. Na afloop wordt het programma weer vanzelf herkend.",
   },
   en: {
     title: "Energie Adviseur",
@@ -112,6 +136,30 @@ const TEXT = {
     running: "running now",
     paused: (duration) => `${duration} paused, not counted`,
     peak: "peak",
+    programsHint: "Click a programme to rename or delete it.",
+    editProgram: (name) => `Edit ${name}`,
+    newName: "Name",
+    rename: "Save name",
+    renamed: (old, name) => `‘${old}’ is now called ‘${name}’.`,
+    mergeAsk: (old, name) =>
+      `A programme called ‘${name}’ already exists. Merge them? The cycles of ‘${old}’ move to ‘${name}’ and ‘${old}’ disappears.`,
+    mergeYes: "Yes, merge",
+    merged: (old, name) => `‘${old}’ was merged into ‘${name}’.`,
+    deleteProgram: "Delete programme",
+    deleteProgramAsk: (name, n) =>
+      `Delete programme ‘${name}’? ` +
+      (n === 0
+        ? "No cycles have this name."
+        : n === 1
+          ? "The cycle with this name goes back to ‘Unnamed’."
+          : `The ${n} cycles with this name go back to ‘Unnamed’.`),
+    programDeleted: (name) => `Programme ‘${name}’ deleted.`,
+    runningTitle: "Running now",
+    runningSince: (when, kwh) => `started ${when} · ${kwh} so far`,
+    runningHint: "Name the programme now. The name is linked to the cycle as soon as it has finished.",
+    runningSaved: (name) => `When it finishes, the cycle will be saved as ‘${name}’.`,
+    runningClear: "Clear name",
+    runningCleared: "Name cleared. When it finishes, the programme will be recognised automatically again.",
   },
 };
 
@@ -124,6 +172,9 @@ const NARROW_BELOW = 600;
 
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+
+// mdi:pencil
+const PENCIL = `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M20.71,7.04C21.1,6.65 21.1,6 20.71,5.63L18.37,3.29C18,2.9 17.35,2.9 16.96,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z"></path></svg>`;
 
 const STYLE = `
   :host {
@@ -170,7 +221,7 @@ const STYLE = `
   button.danger.solid:hover:not(:disabled) { background: var(--ea-error); filter: brightness(1.08); }
   .confirm { border-top: 1px solid var(--ea-line); margin-top: 12px; padding-top: 12px; }
   .confirm p { margin: 0 0 8px; }
-  button.tab[aria-selected="true"], button.chip[aria-pressed="true"] {
+  button.tab[aria-selected="true"], button.chip[aria-pressed="true"], button.program[aria-expanded="true"] {
     background: color-mix(in srgb, var(--ea-accent) 16%, transparent); border-color: var(--ea-accent); color: var(--ea-accent); font-weight: 500;
   }
   input[type="text"], input[type="number"] {
@@ -190,8 +241,14 @@ const STYLE = `
   .banner { border-color: var(--ea-error); color: var(--ea-error); }
   h2 { font-size: 16px; font-weight: 500; margin: 0 0 8px; }
   .programs { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; list-style: none; }
-  .programs li { border: 1px solid var(--ea-line); border-radius: 16px; padding: 4px 12px; }
+  button.program {
+    display: inline-flex; align-items: center; gap: 6px; min-height: 36px;
+    padding: 4px 10px 4px 12px; border-radius: 18px; text-align: left;
+  }
   .programs b { font-weight: 500; }
+  .icon { width: 16px; height: 16px; fill: currentColor; flex: none; opacity: 0.7; }
+  .hint { margin: 8px 0 0; font-size: 12px; }
+  .edit { border-top: 1px solid var(--ea-line); margin-top: 12px; padding-top: 12px; }
   .cycle-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 16px; margin-bottom: 8px; }
   .cycle-head .when { font-size: 16px; font-weight: 500; }
   .cycle-head .num { font-variant-numeric: tabular-nums; }
@@ -234,6 +291,10 @@ class EnergieAdviseurPanel extends HTMLElement {
     this._marker = null; // { cycleId, type: "at", idx } | { cycleId, type: "gap" }
     this._keep = "both";
     this._confirm = null; // cycle_id waarvoor om bevestiging van verwijderen wordt gevraagd
+    this._edit = null; // naam van het programma dat wordt aangepast
+    this._editValue = undefined; // getypte nieuwe naam voor dat programma
+    this._programConfirm = null; // "delete" | "merge": waarvoor om bevestiging wordt gevraagd
+    this._runningNames = {}; // "entry_id:start" -> getypte naam voor de cyclus die nu loopt
     this._days = 10;
     this._busy = false;
     this._status = null; // { text, error }
@@ -307,6 +368,7 @@ class EnergieAdviseurPanel extends HTMLElement {
     }
     if (this._marker && !this._cycle(this._marker.cycleId)) this._marker = null;
     if (this._confirm && !this._cycle(this._confirm)) this._confirm = null;
+    if (this._edit && !this._program(this._edit)) this._closeEditor();
     this._render();
   }
 
@@ -341,6 +403,27 @@ class EnergieAdviseurPanel extends HTMLElement {
 
   _cycle(cycleId) {
     return this._appliance?.cycles.find((c) => c.cycle_id === cycleId) || null;
+  }
+
+  _program(name) {
+    return this._appliance?.programs.find((p) => p.name === name) || null;
+  }
+
+  /** Een ander programma dat al zo heet (hoofdletters tellen niet): dan wordt hernoemen samenvoegen. */
+  _mergeTarget(value) {
+    const wanted = value.trim().toLocaleLowerCase();
+    return this._appliance?.programs.find((p) => p.name !== this._edit && p.name.toLocaleLowerCase() === wanted) || null;
+  }
+
+  _closeEditor() {
+    this._edit = null;
+    this._editValue = undefined;
+    this._programConfirm = null;
+  }
+
+  /** Sleutel voor de getypte naam van de cyclus die nu loopt; een nieuwe beurt begint leeg. */
+  _runningKey(appliance) {
+    return appliance.current ? `${appliance.entry_id}:${appliance.current.start}` : null;
   }
 
   // ---------------------------------------------------------------- rekenen
@@ -457,11 +540,12 @@ class EnergieAdviseurPanel extends HTMLElement {
     const programs = appliance.programs.length
       ? `<ul class="programs">${appliance.programs
           .map(
-            (p) => `<li><b>${esc(p.name)}</b> <span class="muted">${esc(t.times(p.count))} · ${esc(this._duration(p.duration_s))} · ${esc(
-              this._kwh(p.energy_kwh)
-            )}</span></li>`
+            (p) => `<li><button class="program" aria-expanded="${this._edit === p.name}" title="${esc(t.editProgram(p.name))}"
+              data-action="program" data-name="${esc(p.name)}" data-focus="program-${esc(p.name)}"><b>${esc(p.name)}</b>
+              <span class="muted">${esc(t.times(p.count))} · ${esc(this._duration(p.duration_s))} · ${esc(this._kwh(p.energy_kwh))}</span>${PENCIL}</button></li>`
           )
-          .join("")}</ul>`
+          .join("")}</ul>
+        ${this._edit ? this._programEditor() : `<p class="muted hint">${esc(t.programsHint)}</p>`}`
       : `<p class="muted">${esc(t.noPrograms)}</p>`;
 
     const status = this._status
@@ -472,6 +556,7 @@ class EnergieAdviseurPanel extends HTMLElement {
 
     main.innerHTML = `
       <div class="tabs" role="tablist">${tabs}</div>
+      ${this._runningCard(appliance)}
       <div class="card">
         <div class="row">
           <label>${esc(t.importDays)}
@@ -497,6 +582,80 @@ class EnergieAdviseurPanel extends HTMLElement {
         if (focus.start !== null && focus.start !== undefined && target.type === "text") target.setSelectionRange(focus.start, focus.start);
       }
     }
+  }
+
+  /** Kaart voor de cyclus die nu loopt: alvast een naam geven. */
+  _runningCard(appliance) {
+    const current = appliance.current;
+    if (!current) return "";
+    const t = this._t;
+    const typed = this._runningNames[this._runningKey(appliance)];
+    const value = typed !== undefined ? typed : current.program || "";
+    const canSave = value.trim() !== "" && value.trim() !== (current.program || "") && !this._busy;
+    const since = `${this._day(current.start)} ${this._clock(current.start)}`;
+    return `
+      <section class="card" data-running>
+        <div class="cycle-head">
+          <span class="when">${esc(t.runningTitle)}</span>
+          <span class="num muted">${esc(t.runningSince(since, this._kwh(current.energy_kwh)))}</span>
+          <span class="badge ${current.program ? "named" : ""}">${esc(current.program || t.unknown)}</span>
+        </div>
+        <div class="row">
+          <label class="grow">${esc(t.name)}
+            <input type="text" list="ea-programs" maxlength="60" autocomplete="off" placeholder="${esc(t.namePlaceholder)}"
+              value="${esc(value)}" data-field="running-name" data-focus="running-name">
+          </label>
+          <button class="primary" data-action="running-save" ${canSave ? "" : "disabled"}>${esc(t.save)}</button>
+          ${current.program ? `<button data-action="running-clear" ${this._busy ? "disabled" : ""}>${esc(t.runningClear)}</button>` : ""}
+        </div>
+        <p class="muted hint">${esc(t.runningHint)}</p>
+      </section>`;
+  }
+
+  /** Naam aanpassen of programma verwijderen, onder de lijst met programma's. */
+  _programEditor() {
+    const t = this._t;
+    const program = this._program(this._edit);
+    if (!program) return "";
+    const value = this._editValue !== undefined ? this._editValue : program.name;
+    const canSave = value.trim() !== "" && value.trim() !== program.name && !this._busy;
+    const busy = this._busy ? "disabled" : "";
+    let confirm = "";
+    if (this._programConfirm === "delete") {
+      const used = this._appliance.cycles.filter((c) => c.program === program.name).length;
+      confirm = `
+        <div class="confirm" role="alertdialog" aria-label="${esc(t.deleteProgram)}">
+          <p>${esc(t.deleteProgramAsk(program.name, used))}</p>
+          <div class="row">
+            <button class="danger solid" data-action="program-delete-yes" data-focus="program-delete-yes" ${busy}>${esc(t.removeYes)}</button>
+            <button data-action="program-no">${esc(t.cancel)}</button>
+          </div>
+        </div>`;
+    } else if (this._programConfirm === "merge") {
+      const target = this._mergeTarget(value);
+      if (target) {
+        confirm = `
+          <div class="confirm" role="alertdialog" aria-label="${esc(t.mergeYes)}">
+            <p>${esc(t.mergeAsk(program.name, target.name))}</p>
+            <div class="row">
+              <button class="primary" data-action="program-merge-yes" data-focus="program-merge-yes" ${busy}>${esc(t.mergeYes)}</button>
+              <button data-action="program-no">${esc(t.cancel)}</button>
+            </div>
+          </div>`;
+      }
+    }
+    return `
+      <div class="edit" aria-label="${esc(t.editProgram(program.name))}" role="group">
+        <div class="row">
+          <label class="grow">${esc(t.newName)}
+            <input type="text" maxlength="60" autocomplete="off" value="${esc(value)}" data-field="program-name" data-focus="program-name">
+          </label>
+          <button class="primary" data-action="program-save" ${canSave ? "" : "disabled"}>${esc(t.rename)}</button>
+          <button class="danger" data-action="program-delete" ${busy}>${esc(t.remove)}</button>
+          <button data-action="program-cancel">${esc(t.cancel)}</button>
+        </div>
+        ${confirm}
+      </div>`;
   }
 
   _cycleCard(cycle) {
@@ -681,8 +840,90 @@ class EnergieAdviseurPanel extends HTMLElement {
       this._filter = null;
       this._marker = null;
       this._confirm = null;
+      this._closeEditor();
       this._status = null;
       this._render();
+    } else if (action === "program") {
+      const name = button.dataset.name;
+      const open = this._edit !== name;
+      this._closeEditor();
+      if (open) this._edit = name;
+      this._render();
+      if (open) this.shadowRoot.querySelector('[data-focus="program-name"]')?.focus();
+    } else if (action === "program-cancel") {
+      const name = this._edit;
+      this._closeEditor();
+      this._render();
+      this.shadowRoot.querySelector(`[data-focus="program-${CSS.escape(name ?? "")}"]`)?.focus();
+    } else if (action === "program-no") {
+      this._programConfirm = null;
+      this._render();
+      this.shadowRoot.querySelector('[data-focus="program-name"]')?.focus();
+    } else if (action === "program-save" && this._edit) {
+      const old = this._edit;
+      const name = (this._editValue ?? "").trim();
+      if (!name || name === old) return;
+      if (this._mergeTarget(name)) {
+        this._programConfirm = "merge";
+        this._render();
+        this.shadowRoot.querySelector('[data-focus="program-merge-yes"]')?.focus();
+        return;
+      }
+      this._run(
+        () => this._service("rename_program", { appliance: appliance.entry_id, program: old, new_name: name }),
+        () => {
+          this._closeEditor();
+          return this._t.renamed(old, name);
+        }
+      );
+    } else if (action === "program-merge-yes" && this._edit) {
+      const old = this._edit;
+      const target = this._mergeTarget(this._editValue ?? "");
+      if (!target) return;
+      this._run(
+        () =>
+          this._service("rename_program", { appliance: appliance.entry_id, program: old, new_name: target.name, merge: true }),
+        () => {
+          this._closeEditor();
+          return this._t.merged(old, target.name);
+        }
+      );
+    } else if (action === "program-delete" && this._edit) {
+      this._programConfirm = "delete";
+      this._render();
+      this.shadowRoot.querySelector('[data-focus="program-delete-yes"]')?.focus();
+    } else if (action === "program-delete-yes" && this._edit) {
+      const old = this._edit;
+      this._run(
+        () => this._service("delete_program", { appliance: appliance.entry_id, program: old }),
+        () => {
+          this._closeEditor();
+          return this._t.programDeleted(old);
+        }
+      );
+    } else if (action === "running-save" && appliance.current) {
+      const key = this._runningKey(appliance);
+      const name = (this._runningNames[key] ?? "").trim();
+      if (!name) return;
+      // een bestaand programma houdt zijn eigen schrijfwijze
+      const lower = name.toLocaleLowerCase();
+      const shown = appliance.programs.find((p) => p.name.toLocaleLowerCase() === lower)?.name || name;
+      this._run(
+        () => this._service("label_running_cycle", { appliance: appliance.entry_id, program: name }),
+        () => {
+          delete this._runningNames[key];
+          return this._t.runningSaved(shown);
+        }
+      );
+    } else if (action === "running-clear" && appliance.current) {
+      const key = this._runningKey(appliance);
+      this._run(
+        () => this._service("label_running_cycle", { appliance: appliance.entry_id, program: "" }),
+        () => {
+          delete this._runningNames[key];
+          return this._t.runningCleared;
+        }
+      );
     } else if (action === "filter") {
       this._filter = button.dataset.id;
       this._render();
@@ -760,6 +1001,26 @@ class EnergieAdviseurPanel extends HTMLElement {
       save.disabled = value === "" || value === (cycle.program || "") || this._busy;
     } else if (field === "days") {
       this._days = event.target.value;
+    } else if (field === "running-name") {
+      const appliance = this._appliance;
+      if (!appliance?.current) return;
+      this._runningNames[this._runningKey(appliance)] = event.target.value;
+      const value = event.target.value.trim();
+      const save = event.target.closest("[data-running]").querySelector('[data-action="running-save"]');
+      save.disabled = value === "" || value === (appliance.current.program || "") || this._busy;
+    } else if (field === "program-name") {
+      const program = this._program(this._edit);
+      if (!program) return;
+      this._editValue = event.target.value;
+      if (this._programConfirm === "merge") {
+        // de naam is veranderd: de vraag om samen te voegen geldt niet meer
+        this._programConfirm = null;
+        this._render();
+        return;
+      }
+      const value = event.target.value.trim();
+      const save = event.target.closest(".edit").querySelector('[data-action="program-save"]');
+      save.disabled = value === "" || value === program.name || this._busy;
     }
   }
 
@@ -776,7 +1037,20 @@ class EnergieAdviseurPanel extends HTMLElement {
   }
 
   _onKey(event) {
-    if (event.key === "Enter" && event.target.dataset?.field === "name") {
+    const field = event.target.dataset?.field;
+    if (event.key === "Enter" && (field === "running-name" || field === "program-name")) {
+      // anders activeert dezelfde Enter ook de bevestigknop die daarna de focus krijgt
+      event.preventDefault();
+      const action = field === "running-name" ? "running-save" : "program-save";
+      const save = this.shadowRoot.querySelector(`[data-action="${action}"]`);
+      if (save && !save.disabled) save.click();
+      return;
+    }
+    if (event.key === "Escape" && field === "program-name") {
+      this.shadowRoot.querySelector('[data-action="program-cancel"]')?.click();
+      return;
+    }
+    if (event.key === "Enter" && field === "name") {
       const save = event.target.closest("[data-cycle]").querySelector('[data-action="save"]');
       if (!save.disabled) save.click();
       return;
