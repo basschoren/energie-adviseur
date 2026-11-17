@@ -76,7 +76,7 @@ In de zijbalk van Home Assistant staat de pagina **Energie Adviseur** (alleen vo
 
 Splitsen gaat per 30 seconden. Na een klik in de grafiek stel je het moment fijn af met het minutenveld of met de pijltjestoetsen (Shift verspringt 5 minuten). Namen die je aan delen had gegeven, vervallen als je de splitsing ongedaan maakt.
 
-Begin en einde aanpassen gaat ook per 30 seconden. Inkorten gebruikt het bewaarde verloop en kan altijd. Voor verlengen wordt de nieuwe periode opnieuw gemeten uit de historie van Home Assistant; dat kan zolang de ruwe metingen er nog zijn (standaard ongeveer 10 dagen). Een cyclus kan niet over een andere cyclus heen worden verlengd.
+Begin en einde aanpassen gaat ook per 30 seconden. Inkorten gebruikt het bewaarde verloop en kan altijd; bij een cyclus met een pauze (apparaat met statussensor) wordt ook dan opnieuw gemeten zolang de historie er is, zodat de pauze op de goede plek blijft. Voor verlengen wordt de nieuwe periode opnieuw gemeten uit de historie van Home Assistant; dat kan zolang de ruwe metingen er nog zijn (standaard ongeveer 10 dagen). Een cyclus kan niet over een andere cyclus heen worden verlengd.
 
 Na een update van de integratie moet je Home Assistant herstarten voordat de pagina verschijnt.
 

@@ -499,6 +499,41 @@ async def test_split_on_half_minute_and_undo(hass: HomeAssistant) -> None:
     assert len(wm.cycles) == 1 and wm.cycles[0].duration_s == original.duration_s
 
 
+async def test_undo_drops_stale_originals(hass: HomeAssistant) -> None:
+    """Na het terughalen van de hele cyclus mag een bewaard deel van een latere splitsing niet meer meedoen."""
+    set_prices(hass)
+    hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    washer = await add(hass, appliance("Wasmachine", "washer", "sensor.was_power"), "Wasmachine", "sensor.was_power")
+    wm = washer.runtime_data
+    run_cycle(wm, WASH + [(20, 8)] + WASH)
+    whole = wm.cycles[0]
+    wm.split_cycle(whole.cycle_id, minutes=105)
+    second = wm.cycles[1]
+    wm.split_cycle(second.cycle_id, minutes=30)
+    assert len(wm.cycles) == 3 and len(wm.originals) == 2
+
+    # het eerste deel ongedaan maken zet de hele cyclus terug; de bewaarde tweede helft vervalt
+    await wm.async_restore_cycle(wm.cycles[0].cycle_id)
+    assert [(c.start, c.end) for c in wm.cycles] == [(whole.start, whole.end)]
+    assert wm.originals == []
+    assert wm.original_of(wm.cycles[0]) is None
+
+    # een restant in de opslag van een eerdere versie biedt geen 'ongedaan maken' aan op de hele cyclus
+    wm.originals = [second.to_dict()]
+    assert wm.original_of(wm.cycles[0]) is None
+
+    # inkorten zonder recorder gebruikt het bewaarde verloop; ongedaan maken zet de cyclus terug
+    await hass.services.async_call(DOMAIN, "adjust_cycle", {"appliance": "Wasmachine", "end_shift": -20.5}, blocking=True)
+    assert wm.cycles[0].end == whole.end - 20.5 * 60
+    assert wm.original_of(wm.cycles[0])["adjusted"]
+    await wm.async_restore_cycle(wm.cycles[0].cycle_id)
+    assert (wm.cycles[0].end, wm.cycles[0].energy_kwh, wm.cycles[0].detail) == (whole.end, whole.energy_kwh, whole.detail)
+    # verlengen kan niet zonder historie
+    with pytest.raises(HomeAssistantError):
+        await hass.services.async_call(DOMAIN, "adjust_cycle", {"appliance": "Wasmachine", "start_shift": -5}, blocking=True)
+
+
 async def test_panel_and_cycles_websocket(hass: HomeAssistant, hass_client, hass_ws_client, hass_admin_user) -> None:
     set_prices(hass)
     hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})

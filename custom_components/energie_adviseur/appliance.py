@@ -870,9 +870,9 @@ class ApplianceManager:
         """Verschuif het begin en/of het einde van een cyclus, als die niet goed zijn herkend.
 
         De verschuivingen zijn in minuten: negatief is eerder, positief is later.
-        Inkorten gebruikt het bewaarde verloop. Voor verlengen wordt de hele nieuwe
-        periode opnieuw uit de recorder gemeten. De cyclus houdt zijn programma, en
-        dat programma wordt opnieuw berekend.
+        Inkorten gebruikt het bewaarde verloop. Voor verlengen, en voor een cyclus met
+        een pauze, wordt de hele nieuwe periode opnieuw uit de recorder gemeten. De
+        cyclus houdt zijn programma, en dat programma wordt opnieuw berekend.
         """
         cycle = self.last_cycle if cycle_id is None else next((c for c in self.cycles if c.cycle_id == cycle_id), None)
         if cycle is None:
@@ -889,16 +889,24 @@ class ApplianceManager:
             raise HomeAssistantError("Het einde kan niet in de toekomst liggen")
         if start < low - 1 or end > high + 1:
             raise HomeAssistantError("De cyclus zou een andere cyclus of de beurt die nu loopt overlappen")
-        if start >= cycle.start and end <= cycle.end:
+        shorten = start >= cycle.start and end <= cycle.end
+        new: Cycle | None = None
+        if not shorten or cycle.paused_s:
+            # ook inkorten van een cyclus met een pauze: waar die pauze lag staat alleen in de historie
+            try:
+                new = await self._measure(start, end)
+            except HomeAssistantError:
+                if not shorten:
+                    raise
+            if cycle not in self.cycles:
+                raise HomeAssistantError("De cyclus is intussen gewijzigd; probeer het opnieuw")
+        if new is not None:
+            new.program_id = cycle.program_id
+        else:
             try:
                 new = trim_cycle(cycle, start, end)
             except ValueError as err:
                 raise HomeAssistantError(f"Inkorten lukt niet: {err}") from err
-        else:
-            new = await self._measure(start, end)
-            if cycle not in self.cycles:
-                raise HomeAssistantError("De cyclus is intussen gewijzigd; probeer het opnieuw")
-            new.program_id = cycle.program_id
         if abs(new.start - cycle.start) < 1 and abs(new.end - cycle.end) < 1:
             # het bewaarde verloop is grover dan de gevraagde verschuiving (per 5 minuten bij oudere cycli)
             raise HomeAssistantError(
@@ -908,7 +916,8 @@ class ApplianceManager:
         cfg = self.detector.config
         if new.duration_s < cfg.min_duration_s or new.energy_kwh < cfg.min_energy_kwh:
             raise HomeAssistantError("Na het aanpassen blijft er geen bruikbare cyclus over")
-        self.originals = (self.originals + [cycle.to_dict()])[-MAX_ORIGINALS:]
+        # 'adjusted' markeert dat deze bewaarde cyclus ook korter mag zijn dan de cyclus die hem vervangt
+        self.originals = (self.originals + [cycle.to_dict() | {"adjusted": True}])[-MAX_ORIGINALS:]
         self.cycles.remove(cycle)
         self.ignored.discard(new.cycle_id)
         self.cycles.append(new)
@@ -942,12 +951,17 @@ class ApplianceManager:
     # ------------------------------------------------------------ herstellen
 
     def original_of(self, cycle: Cycle) -> dict[str, Any] | None:
-        """De laatst bewaarde eerdere versie van deze cyclus: van voor een splitsing of van voor het aanpassen."""
+        """De laatst bewaarde eerdere versie van deze cyclus: van voor een splitsing of van voor het aanpassen.
+
+        Een cyclus van voor een splitsing omvat deze cyclus helemaal. Alleen een cyclus
+        van voor het aanpassen van begin of einde mag ook korter of verschoven zijn.
+        """
         earlier = [
             o
             for o in self.originals
             if abs(o["start"] - cycle.start) > 1 or abs(o["end"] - cycle.end) > 1
-            if _same_run(o["start"], o["end"], cycle.start, cycle.end)
+            if (o["start"] - 1 <= cycle.start and cycle.end <= o["end"] + 1)
+            or (o.get("adjusted") and _same_run(o["start"], o["end"], cycle.start, cycle.end))
         ]
         return earlier[-1] if earlier else None
 
@@ -987,8 +1001,14 @@ class ApplianceManager:
             raise HomeAssistantError("Geen cyclus gevonden om terug te halen")
         original = None if from_history else self.original_of(cycle)
         if original is not None:
-            self.originals.remove(original)
-            return self._replace([Cycle.from_dict(original)])
+            # wat na dit origineel binnen dezelfde periode is bewaard, hoort bij wijzigingen die nu vervallen
+            index = self.originals.index(original)
+            self.originals = self.originals[:index] + [
+                o
+                for o in self.originals[index + 1 :]
+                if min(o["end"], original["end"]) - max(o["start"], original["start"]) <= 0
+            ]
+            return self._replace([Cycle.from_dict({k: v for k, v in original.items() if k != "adjusted"})])
         margin = timedelta(hours=8)
         detected = await self._detect_from_history(
             dt_util.utc_from_timestamp(cycle.start) - margin, dt_util.utc_from_timestamp(cycle.end) + margin

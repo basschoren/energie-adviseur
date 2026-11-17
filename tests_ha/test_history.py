@@ -304,3 +304,20 @@ async def test_adjust_cycle_with_state_sensor(hass: HomeAssistant, freezer) -> N
     assert shorter.paused_s == longer.paused_s
     assert shorter.duration_s == pytest.approx(39 * 60, abs=1)
     assert shorter.energy_kwh == pytest.approx(longer.energy_kwh - 0.15, abs=0.002)
+
+    # het einde tot voor de pauze: opnieuw gemeten, dus zonder pauze en zonder dat er looptijd verdwijnt
+    await manager.async_adjust_cycle(shorter.cycle_id, end_shift=(start + 900 - shorter.end) / 60)
+    early = manager.cycles[0]
+    assert (early.start, early.end, early.paused_s) == (start + 300, start + 900, 0)
+    assert early.duration_s == 600
+    assert early.energy_kwh == pytest.approx(0.30, abs=0.002)
+
+    # zonder historie valt inkorten terug op het bewaarde verloop; de pauze blijft dan in zijn geheel staan
+    await manager.async_restore_cycle(early.cycle_id)
+    assert manager.cycles[0].end == end + 240
+    hass.config.components.remove("recorder")
+    await manager.async_adjust_cycle(manager.cycles[0].cycle_id, end_shift=-4)
+    assert (manager.cycles[0].end, manager.cycles[0].paused_s) == (end, longer.paused_s)
+    with pytest.raises(HomeAssistantError):
+        await manager.async_adjust_cycle(manager.cycles[0].cycle_id, end_shift=1)
+    hass.config.components.add("recorder")
