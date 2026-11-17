@@ -388,6 +388,28 @@
         }
       }
     },
+    "adjust_cycle": {
+      "name": "Begin en einde van cyclus aanpassen",
+      "description": "Verschuif het begin of het einde van een cyclus als die niet goed zijn herkend. Inkorten gebruikt het bewaarde verloop; voor verlengen wordt de nieuwe periode opnieuw gemeten uit de historie van Home Assistant.",
+      "fields": {
+        "appliance": {
+          "name": "Apparaat",
+          "description": "Het apparaat."
+        },
+        "cycle_id": {
+          "name": "Cyclus",
+          "description": "Id van de cyclus; leeg is de laatste cyclus."
+        },
+        "start_shift": {
+          "name": "Begin verschuiven",
+          "description": "Minuten die het begin verschuift: negatief is eerder (langer), positief is later (korter)."
+        },
+        "end_shift": {
+          "name": "Einde verschuiven",
+          "description": "Minuten die het einde verschuift: negatief is eerder (korter), positief is later (langer)."
+        }
+      }
+    },
     "restore_cycle": {
       "name": "Cyclus terughalen",
       "description": "Haal de oorspronkelijke cyclus terug. Maakt een splitsing ongedaan; anders wordt de periode opnieuw uit de recorder gelezen, per 30 seconden.",

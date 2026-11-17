@@ -62,6 +62,13 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         parts = manager.split_cycle(call.data.get("cycle_id"), call.data.get("minutes"), call.data["keep"])
         return {"cycles": parts}
 
+    async def adjust_cycle(call: ServiceCall) -> ServiceResponse:
+        manager = _manager(hass, call.data["appliance"], ApplianceManager)
+        cycles = await manager.async_adjust_cycle(
+            call.data.get("cycle_id"), call.data["start_shift"], call.data["end_shift"]
+        )
+        return {"cycles": cycles}
+
     async def restore_cycle(call: ServiceCall) -> ServiceResponse:
         manager = _manager(hass, call.data["appliance"], ApplianceManager)
         return {"cycles": await manager.async_restore_cycle(call.data["cycle_id"], call.data["from_history"])}
@@ -120,6 +127,21 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 vol.Optional("cycle_id"): cv.string,
                 vol.Optional("minutes"): vol.All(vol.Coerce(float), vol.Range(min=0.5, max=1440)),
                 vol.Optional("keep", default="both"): vol.In(["both", "first", "second"]),
+            }
+        ),
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    shift = vol.All(vol.Coerce(float), vol.Range(min=-720, max=720))
+    hass.services.async_register(
+        DOMAIN,
+        "adjust_cycle",
+        adjust_cycle,
+        vol.Schema(
+            {
+                **appliance,
+                vol.Optional("cycle_id"): cv.string,
+                vol.Optional("start_shift", default=0): shift,
+                vol.Optional("end_shift", default=0): shift,
             }
         ),
         supports_response=SupportsResponse.OPTIONAL,

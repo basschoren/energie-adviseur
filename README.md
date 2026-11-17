@@ -67,13 +67,16 @@ In de zijbalk van Home Assistant staat de pagina **Energie Adviseur** (alleen vo
 - **Een lopend programma alvast benoemen**: draait het apparaat, dan staat bovenaan de kaart *Draait nu*. Typ daar welk programma je hebt gestart; zodra de cyclus klaar is krijgt hij die naam, ook als de integratie het programma anders niet had herkend. Met *Naam wissen* laat je het weer aan de herkenning over. Zonder de pagina kan het met de actie `energie_adviseur.label_running_cycle`.
 - **Programma's hernoemen of verwijderen**: klik bij *Geleerde programma's* op een programma. Geef je het de naam van een ander programma, dan vraagt de pagina of je ze wilt samenvoegen; de cycli komen dan bij elkaar. Verwijder je een programma, dan staan de cycli ervan weer bij *Zonder naam*.
 - **Cycli splitsen**: klik in de grafiek op het moment waar geknipt moet worden. Je ziet de duur en het verbruik van beide delen voordat je bevestigt, en je kunt één deel laten vervallen. De oranje band is de rustigste periode; met *Rustigste periode gebruiken* knip je die er in één keer tussenuit.
+- **Begin of einde aanpassen**: is het begin of het einde van een cyclus niet goed herkend, klik dan op *Begin/einde aanpassen*. De grafiek toont dan ook het gemeten vermogen tot een uur voor en na de cyclus. Klik in de grafiek om het begin of het einde te verleggen (de dichtstbijzijnde lijn verspringt), of vul in hoeveel minuten het begin of het einde moet verschuiven: negatief is eerder, positief is later. Je ziet de nieuwe tijden en duur voordat je bevestigt. De cyclus houdt zijn naam en het programma wordt opnieuw berekend, zodat het advies met de juiste duur en het juiste verbruik rekent.
 
 - **Cycli verwijderen**: met *Verwijderen* haal je een cyclus weg, bijvoorbeeld als dezelfde beurt twee keer is herkend. Het programma wordt opnieuw berekend en historie inlezen haalt de cyclus niet terug.
 
-- **Splitsing ongedaan maken**: bij elk deel van een gesplitste cyclus staat *Splitsing ongedaan maken*. Dat zet de cyclus van voor de splitsing terug, zodat je opnieuw kunt splitsen. Bij meerdere splitsingen ga je stap voor stap terug.
+- **Ongedaan maken**: bij elk deel van een gesplitste cyclus en bij een cyclus waarvan je het begin of einde hebt aangepast staat *Ongedaan maken*. Dat zet de cyclus van voor de splitsing of aanpassing terug. Bij meerdere wijzigingen ga je stap voor stap terug.
 - **Opnieuw ophalen**: leest de periode van een cyclus opnieuw uit de historie van Home Assistant. Gebruik dit voor cycli die zijn ingelezen of gesplitst met een versie ouder dan 0.5: die zijn alleen per 5 minuten bewaard en hebben geen bewaarde cyclus van voor de splitsing. Dit kan zolang Home Assistant de ruwe metingen nog heeft (standaard ongeveer 10 dagen).
 
 Splitsen gaat per 30 seconden. Na een klik in de grafiek stel je het moment fijn af met het minutenveld of met de pijltjestoetsen (Shift verspringt 5 minuten). Namen die je aan delen had gegeven, vervallen als je de splitsing ongedaan maakt.
+
+Begin en einde aanpassen gaat ook per 30 seconden. Inkorten gebruikt het bewaarde verloop en kan altijd. Voor verlengen wordt de nieuwe periode opnieuw gemeten uit de historie van Home Assistant; dat kan zolang de ruwe metingen er nog zijn (standaard ongeveer 10 dagen). Een cyclus kan niet over een andere cyclus heen worden verlengd.
 
 Na een update van de integratie moet je Home Assistant herstarten voordat de pagina verschijnt.
 
@@ -96,6 +99,24 @@ data:
 - Met `keep: first` of `keep: second` bewaar je maar één deel, bijvoorbeeld om het nadraaien weg te gooien.
 
 De delen worden daarna meteen vergeleken met de programma's die je al hebt geleerd. Bij `appliance` mag je de naam van het apparaat invullen.
+
+### Begin en einde aanpassen met een actie
+
+Met de actie `energie_adviseur.adjust_cycle` verschuif je het begin of het einde van een cyclus, in minuten per halve minuut:
+
+```yaml
+action: energie_adviseur.adjust_cycle
+data:
+  appliance: Vaatwasser
+  cycle_id: "1794127739"
+  start_shift: -10   # het begin 10 minuten eerder
+  end_shift: 5       # het einde 5 minuten later
+```
+
+- Negatief is eerder, positief is later. Laat je `start_shift` of `end_shift` weg, dan blijft die kant staan.
+- Zonder `cycle_id` geldt de laatste cyclus.
+- Verschuift het begin, dan krijgt de cyclus een nieuw id; het antwoord van de actie bevat de aangepaste cyclus.
+- Met `energie_adviseur.restore_cycle` zet je de cyclus van voor de aanpassing terug.
 
 Wordt een programma niet herkend of verward met een ander, pas dan de *Tolerantie bij herkennen* aan. Programma's met sterk wisselende duur, zoals sensor-drogen, kun je het best per belading een eigen naam geven.
 

@@ -1,6 +1,6 @@
-"""Zijbalkpagina 'Energie Adviseur' en de websocket-opdracht waarmee de pagina cycli ophaalt.
+"""Zijbalkpagina 'Energie Adviseur' en de websocket-opdrachten waarmee de pagina cycli ophaalt.
 
-Wijzigen (benoemen, splitsen, historie inlezen) loopt via de gewone diensten;
+Wijzigen (benoemen, splitsen, aanpassen, historie inlezen) loopt via de gewone diensten;
 deze module levert alleen de gegevens en de pagina zelf.
 """
 
@@ -14,6 +14,7 @@ import voluptuous as vol
 from homeassistant.components import panel_custom, websocket_api
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.loader import async_get_integration
 
 from .appliance import ApplianceManager
@@ -41,6 +42,7 @@ async def async_setup_panel(hass: HomeAssistant) -> None:
         require_admin=True,
     )
     websocket_api.async_register_command(hass, ws_cycles)
+    websocket_api.async_register_command(hass, ws_cycle_context)
 
 
 def appliance_payload(manager: ApplianceManager) -> dict[str, Any]:
@@ -100,3 +102,25 @@ def ws_cycles(hass: HomeAssistant, connection: websocket_api.ActiveConnection, m
         if isinstance(manager, ApplianceManager):
             appliances.append(appliance_payload(manager))
     connection.send_result(msg["id"], {"slot_s": SLOT_S, "appliances": appliances})
+
+
+@websocket_api.websocket_command(
+    {
+        vol.Required("type"): f"{DOMAIN}/cycle_context",
+        vol.Required("entry_id"): str,
+        vol.Required("cycle_id"): str,
+    }
+)
+@websocket_api.require_admin
+@websocket_api.async_response
+async def ws_cycle_context(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Het gemeten vermogen rond een cyclus, om het begin of einde te kunnen verleggen."""
+    entry = hass.config_entries.async_get_entry(msg["entry_id"])
+    manager = getattr(entry, "runtime_data", None) if entry and entry.domain == DOMAIN else None
+    if not isinstance(manager, ApplianceManager):
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, "Apparaat niet gevonden")
+        return
+    try:
+        connection.send_result(msg["id"], await manager.async_cycle_context(msg["cycle_id"]))
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], websocket_api.ERR_NOT_FOUND, str(err))

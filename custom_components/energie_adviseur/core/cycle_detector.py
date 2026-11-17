@@ -153,6 +153,93 @@ def split_cycle(cycle: Cycle, at_s: float | None = None) -> tuple[Cycle | None, 
     return _part(cycle, 0, first_stop), _part(cycle, second_start, blocks)
 
 
+def trim_cycle(cycle: Cycle, start: float, end: float) -> Cycle:
+    """Kort een cyclus in tot [start, end], uit het bewaarde verloop.
+
+    Het begin valt op het dichtstbijzijnde blok van het fijnste verloop. Waar een
+    pauze precies lag is niet bewaard: die blijft in zijn geheel meetellen.
+    """
+    step, series = cycle.step_s, cycle.series
+    first = max(0, round((start - cycle.start) / step))
+    active = cycle.duration_s - first * step - max(0.0, cycle.end - end)
+    if first >= len(series) or active <= 0:
+        raise ValueError("er blijft niets van de cyclus over")
+    piece = list(series[first : first + int(-(-active // step))])
+    wh = sum(watt * max(0.0, min(step, active - i * step)) / 3600.0 for i, watt in enumerate(piece))
+    peak = cycle.peak_w if max(piece) >= max(series) else max(piece)
+    new_start = cycle.start + first * step
+    return Cycle(
+        start=new_start,
+        end=new_start + active + cycle.paused_s,
+        energy_kwh=round(wh / 1000.0, 4),
+        profile=_regroup(piece, step, SLOT_S, active) if cycle.detail else piece,
+        peak_w=round(peak, 1),
+        program_id=cycle.program_id,
+        cycle_id=str(int(new_start)),
+        detail=piece if cycle.detail else [],
+        paused_s=cycle.paused_s,
+    )
+
+
+def measure_cycle(
+    samples: list[tuple[float, float]], start: float, end: float, pauses: list[tuple[float, float]] | None = None
+) -> Cycle:
+    """Bouw een cyclus over precies [start, end] uit ruwe metingen [(tijd, W)].
+
+    De laatste meting op of voor `start` geldt vanaf het begin, de laatste meting
+    geldt tot `end`. Perioden in `pauses` [(van, tot)] tellen niet mee, net als bij
+    een live gemeten cyclus. Zonder meting op of voor `start` is het begin onbekend.
+    """
+    samples = sorted(samples)
+    if end <= start:
+        raise ValueError("het einde ligt voor het begin")
+    if not samples or samples[0][0] > start + 1:
+        raise ValueError("er zijn geen metingen van het begin van deze periode")
+    # (tijd, volgorde, soort, waarde): bij gelijke tijd eerst pauze uit, dan meting, dan pauze aan
+    events: list[tuple[float, int, str, float]] = [(max(ts, start), 1, "w", watt) for ts, watt in samples if ts < end]
+    for begin, stop in pauses or []:
+        begin, stop = max(begin, start), min(stop, end)
+        if stop > begin:
+            events += [(begin, 2, "pause", 0.0), (stop, 0, "resume", 0.0)]
+    detector = CycleDetector()
+    detector._reset(start=start)
+    detector.last_ts = start
+    peak = 0.0
+
+    def advance(ts: float) -> None:
+        nonlocal peak
+        if ts > detector.last_ts and detector.pause_since is None:
+            peak = max(peak, detector.last_power)
+        detector._advance(ts)
+
+    for ts, _, kind, value in sorted(events, key=lambda e: e[:2]):
+        advance(ts)
+        if kind == "w":
+            detector.last_power = max(0.0, value)
+        elif kind == "pause":
+            if detector.pause_since is None:
+                detector.pause_since = ts
+        elif detector.pause_since is not None:
+            detector.paused_s += ts - detector.pause_since
+            detector.pause_since = None
+    advance(end)
+    if detector.pause_since is not None:
+        detector.paused_s += end - detector.pause_since
+    duration = end - start - detector.paused_s
+    if duration <= 0:
+        raise ValueError("er blijft niets van de cyclus over")
+    return Cycle(
+        start=start,
+        end=end,
+        energy_kwh=round(detector.wh / 1000.0, 4),
+        profile=_to_watts(detector.buckets, SLOT_S, duration),
+        peak_w=round(peak, 1),
+        cycle_id=str(int(start)),
+        detail=_to_watts(detector.fine, DETAIL_S, duration),
+        paused_s=round(detector.paused_s, 1),
+    )
+
+
 @dataclass
 class CycleDetector:
     """Toestandsmachine: rust -> kandidaat -> actief -> rust.

@@ -90,6 +90,34 @@ split_cycle:
             - both
             - first
             - second
+adjust_cycle:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    cycle_id:
+      selector:
+        text:
+    start_shift:
+      default: 0
+      selector:
+        number:
+          min: -720
+          max: 720
+          step: 0.5
+          unit_of_measurement: min
+          mode: box
+    end_shift:
+      default: 0
+      selector:
+        number:
+          min: -720
+          max: 720
+          step: 0.5
+          unit_of_measurement: min
+          mode: box
 restore_cycle:
   fields:
     appliance:

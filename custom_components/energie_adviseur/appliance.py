@@ -41,8 +41,19 @@ from .const import (
     UNAVAILABLE,
     signal,
 )
-from .core import SLOT_S
-from .core.cycle_detector import OTHER, PAUSED, RUNNING, Cycle, CycleDetector, DetectorConfig, quiet_gap, split_cycle
+from .core import DETAIL_S, SLOT_S
+from .core.cycle_detector import (
+    OTHER,
+    PAUSED,
+    RUNNING,
+    Cycle,
+    CycleDetector,
+    DetectorConfig,
+    measure_cycle,
+    quiet_gap,
+    split_cycle,
+    trim_cycle,
+)
 from .core.program_matcher import Program, match, rebuild
 from .core.scheduler import Advice, ChainPlan, best_start, day_mask, plan_chain
 from .market import get_market, parse_time
@@ -73,6 +84,8 @@ def fmt_clock(ts: float) -> str:
 
 
 MAX_ORIGINALS = 50
+MAX_CYCLE_S = 86400  # langer dan een etmaal is geen cyclus
+CONTEXT_MARGIN_S = 3600  # hoeveel de pagina voor en na een cyclus laat zien bij het aanpassen
 
 
 def _same_run(a_start: float, a_end: float, b_start: float, b_end: float) -> bool:
@@ -738,8 +751,8 @@ class ApplianceManager:
 
     # ------------------------------------------------------------ historie
 
-    async def _detect_from_history(self, start: datetime, end: datetime) -> list[Cycle]:
-        """Alle cycli die de detector in de ruwe metingen van de recorder vindt."""
+    async def _history_events(self, start: datetime, end: datetime) -> list[tuple[float, float | None, str | None]]:
+        """Metingen en statuswijzigingen uit de recorder, op tijd door elkaar: (tijd, vermogen, status)."""
         from homeassistant.components.recorder import get_instance, history
 
         if "recorder" not in self.hass.config.components:
@@ -754,10 +767,6 @@ class ApplianceManager:
 
         current = self.hass.states.get(self.power_entity)
         unit_kw = current is not None and current.attributes.get("unit_of_measurement") == "kW"
-        detector = CycleDetector(self._detector_config())
-        found: list[Cycle] = []
-
-        # metingen en statuswijzigingen op tijd door elkaar: (tijd, vermogen, status)
         events: list[tuple[float, float | None, str | None]] = []
         for state in await changes(self.power_entity):
             if state.state in UNAVAILABLE:
@@ -773,6 +782,13 @@ class ApplianceManager:
                 if phase is not None:
                     events.append((state.last_updated.timestamp(), None, phase))
             events.sort(key=lambda e: e[0])
+        return events
+
+    async def _detect_from_history(self, start: datetime, end: datetime) -> list[Cycle]:
+        """Alle cycli die de detector in de ruwe metingen van de recorder vindt."""
+        events = await self._history_events(start, end)
+        detector = CycleDetector(self._detector_config())
+        found: list[Cycle] = []
 
         last_ts: float | None = None
         delay = detector.config.stop_delay_s + 1
@@ -811,17 +827,129 @@ class ApplianceManager:
         self._changed()
         return len(found)
 
+    # ------------------------------------------------------------ begin en einde aanpassen
+
+    async def _history_since(self, start: float, end: float) -> list[tuple[float, float | None, str | None]]:
+        """Metingen vanaf `start`. De recorder geeft een meting die precies op het begin van de
+        gevraagde periode valt niet terug, en een cyclus begint juist op zo'n meting: lees een seconde eerder."""
+        return await self._history_events(dt_util.utc_from_timestamp(start - 1), dt_util.utc_from_timestamp(end))
+
+    async def _measure(self, start: float, end: float) -> Cycle:
+        """Meet de periode [start, end] opnieuw uit de recorder; pauzes van de statussensor tellen niet mee."""
+        events = await self._history_since(start, end)
+        samples = [(ts, power) for ts, power, _ in events if power is not None]
+        pauses: list[tuple[float, float]] = []
+        since: float | None = None
+        for ts, _, phase in events:
+            if phase == PAUSED and since is None:
+                since = ts
+            elif phase is not None and phase != PAUSED and since is not None:
+                pauses.append((since, ts))
+                since = None
+        if since is not None:
+            pauses.append((since, end))
+        try:
+            return measure_cycle(samples, start, end, pauses)
+        except ValueError as err:
+            raise HomeAssistantError(
+                "De recorder heeft van deze periode geen metingen meer; de cyclus kan alleen nog worden ingekort"
+            ) from err
+
+    def _adjust_limits(self, cycle: Cycle) -> tuple[float, float]:
+        """Tussen welke tijden deze cyclus mag liggen: na de vorige cyclus, voor de volgende en voor de beurt die nu loopt."""
+        now = time.time()
+        low = max((c.end for c in self.cycles if c is not cycle and c.end <= cycle.start + 1), default=0.0)
+        high = min((c.start for c in self.cycles if c is not cycle and c.start >= cycle.end - 1), default=now)
+        if self.detector.start is not None:
+            high = min(high, self.detector.start)
+        return low, min(high, now)
+
+    async def async_adjust_cycle(
+        self, cycle_id: str | None = None, start_shift: float = 0.0, end_shift: float = 0.0
+    ) -> list[dict[str, Any]]:
+        """Verschuif het begin en/of het einde van een cyclus, als die niet goed zijn herkend.
+
+        De verschuivingen zijn in minuten: negatief is eerder, positief is later.
+        Inkorten gebruikt het bewaarde verloop. Voor verlengen wordt de hele nieuwe
+        periode opnieuw uit de recorder gemeten. De cyclus houdt zijn programma, en
+        dat programma wordt opnieuw berekend.
+        """
+        cycle = self.last_cycle if cycle_id is None else next((c for c in self.cycles if c.cycle_id == cycle_id), None)
+        if cycle is None:
+            raise HomeAssistantError("Geen cyclus gevonden om aan te passen")
+        start, end = cycle.start + float(start_shift) * 60.0, cycle.end + float(end_shift) * 60.0
+        if start == cycle.start and end == cycle.end:
+            raise HomeAssistantError("Geef op hoeveel het begin of het einde moet verschuiven")
+        if end <= start:
+            raise HomeAssistantError("Het einde moet na het begin liggen")
+        if end - start > MAX_CYCLE_S:
+            raise HomeAssistantError("Een cyclus kan niet langer dan een etmaal duren")
+        low, high = self._adjust_limits(cycle)
+        if end > time.time() + 1:
+            raise HomeAssistantError("Het einde kan niet in de toekomst liggen")
+        if start < low - 1 or end > high + 1:
+            raise HomeAssistantError("De cyclus zou een andere cyclus of de beurt die nu loopt overlappen")
+        if start >= cycle.start and end <= cycle.end:
+            try:
+                new = trim_cycle(cycle, start, end)
+            except ValueError as err:
+                raise HomeAssistantError(f"Inkorten lukt niet: {err}") from err
+        else:
+            new = await self._measure(start, end)
+            if cycle not in self.cycles:
+                raise HomeAssistantError("De cyclus is intussen gewijzigd; probeer het opnieuw")
+            new.program_id = cycle.program_id
+        if abs(new.start - cycle.start) < 1 and abs(new.end - cycle.end) < 1:
+            # het bewaarde verloop is grover dan de gevraagde verschuiving (per 5 minuten bij oudere cycli)
+            raise HomeAssistantError(
+                "De verschuiving is kleiner dan een blok van het bewaarde verloop; kies een grotere stap "
+                "of haal de cyclus eerst opnieuw op"
+            )
+        cfg = self.detector.config
+        if new.duration_s < cfg.min_duration_s or new.energy_kwh < cfg.min_energy_kwh:
+            raise HomeAssistantError("Na het aanpassen blijft er geen bruikbare cyclus over")
+        self.originals = (self.originals + [cycle.to_dict()])[-MAX_ORIGINALS:]
+        self.cycles.remove(cycle)
+        self.ignored.discard(new.cycle_id)
+        self.cycles.append(new)
+        self.cycles.sort(key=lambda c: c.start)
+        program = self.programs.get(new.program_id or "")
+        if program is not None:
+            rebuild(program, self.cycles)
+        self._absorb_unlabeled()
+        self._changed()
+        return [self._describe(new) | {"programma": self.program_name(new.program_id)}]
+
+    async def async_cycle_context(self, cycle_id: str) -> dict[str, Any]:
+        """Het gemeten vermogen rond een cyclus, zodat de pagina kan tonen wat er voor en na gebeurde."""
+        cycle = next((c for c in self.cycles if c.cycle_id == cycle_id), None)
+        if cycle is None:
+            raise HomeAssistantError("Geen cyclus gevonden")
+        low, high = self._adjust_limits(cycle)
+        out: dict[str, Any] = {"cycle_id": cycle.cycle_id, "min_start": low, "max_end": high, "series": None}
+        start = cycle.start - CONTEXT_MARGIN_S
+        end = min(time.time(), cycle.end + CONTEXT_MARGIN_S)
+        try:
+            events = await self._history_since(start, end)
+            samples = [(ts, power) for ts, power, _ in events if power is not None]
+            if samples and start < samples[0][0] < cycle.end:
+                start = samples[0][0]  # verder terug heeft de recorder niets: daar begint de grafiek
+            measured = measure_cycle(samples, start, end)
+        except (HomeAssistantError, ValueError):
+            return out  # geen ruwe metingen meer: de pagina toont dan alleen de cyclus zelf
+        return out | {"start": start, "end": end, "step_s": DETAIL_S, "series": measured.detail}
+
     # ------------------------------------------------------------ herstellen
 
     def original_of(self, cycle: Cycle) -> dict[str, Any] | None:
-        """De kleinste bewaarde oorspronkelijke cyclus waar deze cyclus een deel van is."""
-        inside = [
+        """De laatst bewaarde eerdere versie van deze cyclus: van voor een splitsing of van voor het aanpassen."""
+        earlier = [
             o
             for o in self.originals
-            if o["cycle_id"] != cycle.cycle_id or o["end"] != cycle.end
-            if o["start"] - 1 <= cycle.start and cycle.end <= o["end"] + 1
+            if abs(o["start"] - cycle.start) > 1 or abs(o["end"] - cycle.end) > 1
+            if _same_run(o["start"], o["end"], cycle.start, cycle.end)
         ]
-        return min(inside, key=lambda o: o["end"] - o["start"], default=None)
+        return earlier[-1] if earlier else None
 
     def _replace(self, new: list[Cycle]) -> list[dict[str, Any]]:
         """Zet cycli terug en haal alles weg wat dezelfde tijd beslaat (de delen van een splitsing).
@@ -850,8 +978,8 @@ class ApplianceManager:
     async def async_restore_cycle(self, cycle_id: str, from_history: bool = False) -> list[dict[str, Any]]:
         """Haal de oorspronkelijke cyclus terug.
 
-        Is de cyclus een deel van een splitsing, dan komt de cyclus van voor die
-        splitsing terug. Anders (of met `from_history`) wordt de periode opnieuw uit
+        Is de cyclus een deel van een splitsing of zijn begin of einde aangepast, dan
+        komt de cyclus van daarvoor terug. Anders (of met `from_history`) wordt de periode opnieuw uit
         de recorder gelezen, met het verloop per 30 seconden.
         """
         cycle = next((c for c in self.cycles if c.cycle_id == cycle_id), None)

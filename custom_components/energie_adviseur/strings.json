@@ -388,6 +388,28 @@
         }
       }
     },
+    "adjust_cycle": {
+      "name": "Adjust cycle start and end",
+      "description": "Move the start or the end of a cycle when it was not detected correctly. Shortening uses the stored profile; lengthening measures the new period again from the Home Assistant history.",
+      "fields": {
+        "appliance": {
+          "name": "Appliance",
+          "description": "The appliance."
+        },
+        "cycle_id": {
+          "name": "Cycle",
+          "description": "Cycle id; empty means the last cycle."
+        },
+        "start_shift": {
+          "name": "Move start",
+          "description": "Minutes to move the start: negative is earlier (longer), positive is later (shorter)."
+        },
+        "end_shift": {
+          "name": "Move end",
+          "description": "Minutes to move the end: negative is earlier (shorter), positive is later (longer)."
+        }
+      }
+    },
     "restore_cycle": {
       "name": "Restore cycle",
       "description": "Bring back the original cycle. Undoes a split; otherwise the period is read again from the recorder in 30-second detail.",

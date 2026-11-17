@@ -7,7 +7,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energie_adviseur"))
 
 from core import DETAIL_S, SLOT_S  # noqa: E402
-from core.cycle_detector import OTHER, PAUSED, RUNNING, CycleDetector, DetectorConfig, quiet_gap, split_cycle  # noqa: E402
+from core.cycle_detector import (  # noqa: E402
+    OTHER,
+    PAUSED,
+    RUNNING,
+    CycleDetector,
+    DetectorConfig,
+    measure_cycle,
+    quiet_gap,
+    split_cycle,
+    trim_cycle,
+)
 from core.heating_model import DayRecord, cop_at, fit, hourly_advice, implied_cop  # noqa: E402
 from core.price import parse_intervals, price_scale  # noqa: E402
 from core.program_matcher import Program, match, rebuild  # noqa: E402
@@ -520,6 +530,107 @@ class StateSensorTest(unittest.TestCase):
         a, b = split_cycle(cycles[0], at_s=1200)
         self.assertEqual((a.duration_s, b.duration_s), (1200, 1800))
         self.assertAlmostEqual(a.energy_kwh + b.energy_kwh, cycles[0].energy_kwh, delta=0.001)
+
+
+class AdjustTest(unittest.TestCase):
+    """Begin en einde van een cyclus verleggen: inkorten uit het verloop, verlengen uit ruwe metingen."""
+
+    WASH = [(15, 2000), (40, 150), (30, 300), (10, 500)]
+
+    def cycle(self):
+        cycles, _ = run(CycleDetector(), self.WASH + IDLE)
+        return cycles[0]
+
+    def samples(self, before=30):
+        """Dezelfde was als ruwe metingen per 30 seconden, met rust ervoor en erna."""
+        out, t = [], T0 - before * 60
+        for minutes, watt in [(before, 1)] + self.WASH + IDLE:
+            for _ in range(minutes * 2):
+                out.append((t, watt))
+                t += 30
+        return out
+
+    def test_trim_start_and_end(self):
+        cycle = self.cycle()
+        cycle.program_id = "abc"
+        short = trim_cycle(cycle, cycle.start + 15 * 60, cycle.end - 10 * 60)
+        self.assertEqual((short.start, short.end), (cycle.start + 900, cycle.end - 600))
+        self.assertEqual(short.duration_s, 70 * 60)
+        self.assertAlmostEqual(short.energy_kwh, 0.25, delta=0.001)  # 40 min 150 W en 30 min 300 W
+        self.assertEqual((len(short.detail), len(short.profile)), (140, 14))
+        self.assertEqual(short.peak_w, 300)
+        self.assertEqual(short.cycle_id, str(int(cycle.start + 900)))
+        self.assertEqual(short.program_id, "abc")
+
+    def test_trim_on_half_minute(self):
+        cycle = self.cycle()
+        short = trim_cycle(cycle, cycle.start, cycle.end - 150)
+        self.assertEqual(short.duration_s, 95 * 60 - 150)
+        self.assertEqual(len(short.detail), 185)
+        self.assertEqual(len(short.profile), 19)  # 18 hele blokken en een half blok
+        self.assertAlmostEqual(short.energy_kwh, cycle.energy_kwh - 500 * 150 / 3.6e6, delta=0.001)
+
+    def test_trim_old_cycle_moves_start_per_five_minutes(self):
+        cycle = self.cycle()
+        cycle.detail = []
+        short = trim_cycle(cycle, cycle.start + 7 * 60, cycle.end)  # afgerond op 5 minuten
+        self.assertEqual(short.start, cycle.start + 300)
+        self.assertEqual(short.detail, [])
+        self.assertEqual(len(short.profile), 18)
+
+    def test_trim_keeps_pause_and_end(self):
+        cfg = DetectorConfig(state_mode=True, start_delay_s=60)
+        cycles, _ = run_states(CycleDetector(cfg), [(1200, RUNNING, 1800), (600, PAUSED, 5), (1800, RUNNING, 900)])
+        cycle = cycles[0]
+        short = trim_cycle(cycle, cycle.start, cycle.end - 300)
+        self.assertEqual(short.end, cycle.end - 300)
+        self.assertEqual(short.paused_s, 600)
+        self.assertEqual(short.duration_s, cycle.duration_s - 300)
+        self.assertAlmostEqual(short.energy_kwh, cycle.energy_kwh - 900 * 300 / 3.6e6, delta=0.001)
+
+    def test_trim_nothing_left_fails(self):
+        cycle = self.cycle()
+        for start, end in ((cycle.end, cycle.end), (cycle.start + 3600, cycle.start + 1800)):
+            with self.assertRaises(ValueError):
+                trim_cycle(cycle, start, end)
+
+    def test_measure_equals_live_cycle(self):
+        cycle = self.cycle()
+        measured = measure_cycle(self.samples(), cycle.start, cycle.end)
+        self.assertEqual((measured.start, measured.end, measured.paused_s), (cycle.start, cycle.end, 0))
+        self.assertAlmostEqual(measured.energy_kwh, cycle.energy_kwh, delta=0.0001)
+        self.assertEqual(measured.detail, cycle.detail)
+        self.assertEqual(measured.profile, cycle.profile)
+        self.assertEqual(measured.peak_w, cycle.peak_w)
+
+    def test_measure_longer_period(self):
+        cycle = self.cycle()
+        measured = measure_cycle(self.samples(), cycle.start - 600, cycle.end + 300)
+        self.assertEqual(measured.duration_s, cycle.duration_s + 900)
+        self.assertEqual(measured.detail[:20], [1.0] * 20)
+        self.assertEqual(measured.detail[20:-10], cycle.detail)
+        self.assertAlmostEqual(measured.energy_kwh, cycle.energy_kwh + 900 / 3.6e6, delta=0.0001)
+        self.assertEqual(measured.cycle_id, str(int(cycle.start - 600)))
+
+    def test_measure_holds_last_value_before_start(self):
+        # een sensor die alleen bij verandering meldt: de waarde van voor het begin geldt vanaf het begin
+        measured = measure_cycle([(T0 - 500, 1000), (T0 + 1800, 0)], T0, T0 + 3600)
+        self.assertAlmostEqual(measured.energy_kwh, 0.5, delta=0.0001)
+        self.assertEqual(measured.peak_w, 1000)
+
+    def test_measure_skips_pauses(self):
+        samples = [(T0 - 60, 0), (T0, 1800), (T0 + 1200, 5), (T0 + 1800, 900), (T0 + 3600, 2)]
+        measured = measure_cycle(samples, T0, T0 + 3600, [(T0 + 1200, T0 + 1800)])
+        self.assertEqual(measured.paused_s, 600)
+        self.assertEqual(measured.duration_s, 3000)
+        self.assertAlmostEqual(measured.energy_kwh, 1.05, delta=0.0001)  # 20 min 1800 W en 30 min 900 W
+        self.assertEqual(len(measured.detail), 100)
+        self.assertEqual(measured.detail[39:41], [1800.0, 900.0])  # de pauze zit niet in het verloop
+
+    def test_measure_without_data_fails(self):
+        for samples in ([], [(T0 + 600, 100)]):
+            with self.assertRaises(ValueError):
+                measure_cycle(samples, T0, T0 + 3600)
 
 
 if __name__ == "__main__":

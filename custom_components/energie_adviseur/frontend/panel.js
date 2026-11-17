@@ -1,6 +1,6 @@
 /*
  * Energie Adviseur - zijbalkpagina.
- * Cycli bekijken, een naam geven, splitsen door in de grafiek te klikken en historie inlezen.
+ * Cycli bekijken, een naam geven, splitsen of het begin en einde verleggen in de grafiek, en historie inlezen.
  * Geen bouwstap en geen afhankelijkheden: een gewoon custom element.
  */
 
@@ -46,10 +46,11 @@ const TEXT = {
     quietNote: "De rustigste periode zelf vervalt.",
     stepFine: "Splitsen gaat per 30 seconden. Fijn afstellen kan met het minutenveld of met de pijltjestoetsen in de grafiek (Shift = 5 minuten).",
     stepCoarse: "Van deze cyclus is het verloop alleen per 5 minuten bewaard. Met ‘Opnieuw ophalen’ lees je het per 30 seconden in.",
-    undoNote: "Een splitsing maak je later ongedaan met ‘Splitsing ongedaan maken’.",
-    undo: "Splitsing ongedaan maken",
+    undoNote: "Een splitsing maak je later ongedaan met ‘Ongedaan maken’.",
+    undo: "Ongedaan maken",
     refetch: "Opnieuw ophalen",
     refetchTitle: "Leest deze periode opnieuw uit de historie van Home Assistant, per 30 seconden. Delen van een eerdere splitsing worden weer één cyclus.",
+    undoTitle: "Zet de cyclus terug zoals hij was voor de laatste splitsing of aanpassing.",
     restored: (n) => (n === 1 ? "Oorspronkelijke cyclus teruggehaald." : `${n} cycli teruggehaald.`),
     splitDone: "Cyclus gesplitst.",
     remove: "Verwijderen",
@@ -83,6 +84,21 @@ const TEXT = {
     runningSaved: (name) => `Na afloop wordt de cyclus opgeslagen als ‘${name}’.`,
     runningClear: "Naam wissen",
     runningCleared: "Naam gewist. Na afloop wordt het programma weer vanzelf herkend.",
+    adjust: "Begin/einde aanpassen",
+    adjustHint: "Klik in de grafiek om het begin of het einde te verleggen: de dichtstbijzijnde lijn verspringt.",
+    adjustChartLabel: "Vermogen rond de cyclus",
+    adjustStart: "Begin verschuiven (min)",
+    adjustEnd: "Einde verschuiven (min)",
+    adjustNew: "Nieuw",
+    adjustWas: (range) => `was ${range}`,
+    approx: "ca.",
+    adjustApply: "Aanpassen",
+    adjusted: "Begin en einde aangepast.",
+    adjustLoading: "Metingen rond de cyclus laden…",
+    adjustNoHistory: "Home Assistant heeft van deze periode geen ruwe metingen meer. Je kunt de cyclus alleen nog inkorten.",
+    adjustNote:
+      "Negatief is eerder, positief is later. Aanpassen gaat per 30 seconden; in de grafiek kan het ook met de pijltjestoetsen (Shift = 5 minuten). Bij verlengen wordt de periode opnieuw gemeten uit de historie. De cyclus houdt zijn naam, en terugdraaien kan met ‘Ongedaan maken’.",
+    adjustCoarse: "Van deze cyclus is het verloop alleen per 5 minuten bewaard: bij inkorten verspringt het begin per 5 minuten.",
   },
   en: {
     title: "Energie Adviseur",
@@ -123,10 +139,11 @@ const TEXT = {
     quietNote: "The quietest period itself is dropped.",
     stepFine: "Splitting works in 30-second steps. Fine-tune with the minutes field or the arrow keys in the chart (Shift = 5 minutes).",
     stepCoarse: "This cycle was only stored in 5-minute steps. Use ‘Fetch again’ to read it in 30-second detail.",
-    undoNote: "You can undo a split later with ‘Undo split’.",
-    undo: "Undo split",
+    undoNote: "You can undo a split later with ‘Undo’.",
+    undo: "Undo",
     refetch: "Fetch again",
     refetchTitle: "Reads this period again from the Home Assistant history, in 30-second detail. Parts of an earlier split become one cycle again.",
+    undoTitle: "Puts the cycle back as it was before the last split or adjustment.",
     restored: (n) => (n === 1 ? "Original cycle restored." : `${n} cycles restored.`),
     splitDone: "Cycle split.",
     remove: "Delete",
@@ -160,6 +177,21 @@ const TEXT = {
     runningSaved: (name) => `When it finishes, the cycle will be saved as ‘${name}’.`,
     runningClear: "Clear name",
     runningCleared: "Name cleared. When it finishes, the programme will be recognised automatically again.",
+    adjust: "Adjust start/end",
+    adjustHint: "Click the chart to move the start or the end: the nearest line jumps there.",
+    adjustChartLabel: "Power around the cycle",
+    adjustStart: "Move start (min)",
+    adjustEnd: "Move end (min)",
+    adjustNew: "New",
+    adjustWas: (range) => `was ${range}`,
+    approx: "approx.",
+    adjustApply: "Adjust",
+    adjusted: "Start and end adjusted.",
+    adjustLoading: "Loading measurements around the cycle…",
+    adjustNoHistory: "Home Assistant no longer has raw measurements for this period. You can only shorten the cycle.",
+    adjustNote:
+      "Negative is earlier, positive is later. Adjusting works in 30-second steps; in the chart you can also use the arrow keys (Shift = 5 minutes). Lengthening measures the period again from the history. The cycle keeps its name, and ‘Undo’ puts it back.",
+    adjustCoarse: "This cycle was only stored in 5-minute steps: when shortening, the start moves in 5-minute steps.",
   },
 };
 
@@ -169,6 +201,8 @@ const PLOT = { left: 46, right: 10, top: 10, bottom: 24 };
 const WIDE = { w: 800, h: 190, ticks: 6 };
 const NARROW = { w: 400, h: 200, ticks: 3 };
 const NARROW_BELOW = 600;
+const ADJUST_STEP = 30; // begin en einde verleggen gaat per 30 seconden
+const ADJUST_MIN = 60; // begin en einde blijven minstens zo ver uit elkaar
 
 const esc = (value) =>
   String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -221,7 +255,7 @@ const STYLE = `
   button.danger.solid:hover:not(:disabled) { background: var(--ea-error); filter: brightness(1.08); }
   .confirm { border-top: 1px solid var(--ea-line); margin-top: 12px; padding-top: 12px; }
   .confirm p { margin: 0 0 8px; }
-  button.tab[aria-selected="true"], button.chip[aria-pressed="true"], button.program[aria-expanded="true"] {
+  button.tab[aria-selected="true"], button.chip[aria-pressed="true"], button.program[aria-expanded="true"], button.toggle[aria-expanded="true"] {
     background: color-mix(in srgb, var(--ea-accent) 16%, transparent); border-color: var(--ea-accent); color: var(--ea-accent); font-weight: 500;
   }
   input[type="text"], input[type="number"] {
@@ -261,6 +295,9 @@ const STYLE = `
   .chart .quiet { fill: color-mix(in srgb, var(--ea-quiet) 22%, transparent); }
   .chart .cut { fill: color-mix(in srgb, var(--ea-error) 18%, transparent); }
   .chart .marker { stroke: var(--ea-error); stroke-width: 2; vector-effect: non-scaling-stroke; }
+  .chart .marker.active { stroke-width: 4; }
+  .chart .outside { fill: color-mix(in srgb, var(--ea-muted) 26%, transparent); }
+  .chart .was { stroke: var(--ea-muted); stroke-width: 1.5; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; }
   .chart .hover { stroke: var(--primary-text-color, #212121); stroke-width: 1; stroke-dasharray: 3 3; vector-effect: non-scaling-stroke; }
   .readout { min-height: 20px; font-variant-numeric: tabular-nums; margin: 4px 0 12px; }
   .split { border-top: 1px solid var(--ea-line); margin-top: 12px; padding-top: 12px; }
@@ -290,6 +327,9 @@ class EnergieAdviseurPanel extends HTMLElement {
     this._names = {}; // cycle_id -> getypte naam
     this._marker = null; // { cycleId, type: "at", idx } | { cycleId, type: "gap" }
     this._keep = "both";
+    // begin/einde aanpassen: { cycleId, ds, de (seconden verschuiving), active: "start" | "end",
+    // context: undefined (laden) | antwoord van energie_adviseur/cycle_context }
+    this._adjust = null;
     this._confirm = null; // cycle_id waarvoor om bevestiging van verwijderen wordt gevraagd
     this._edit = null; // naam van het programma dat wordt aangepast
     this._editValue = undefined; // getypte nieuwe naam voor dat programma
@@ -367,6 +407,7 @@ class EnergieAdviseurPanel extends HTMLElement {
       this._selected = appliances.length ? appliances[0].entry_id : null;
     }
     if (this._marker && !this._cycle(this._marker.cycleId)) this._marker = null;
+    if (this._adjust && !this._cycle(this._adjust.cycleId)) this._adjust = null;
     if (this._confirm && !this._cycle(this._confirm)) this._confirm = null;
     if (this._edit && !this._program(this._edit)) this._closeEditor();
     this._render();
@@ -456,6 +497,67 @@ class EnergieAdviseurPanel extends HTMLElement {
       return [this._part(cycle, 0, first), this._part(cycle, first + count, n)];
     }
     return [this._part(cycle, 0, this._marker.idx), this._part(cycle, this._marker.idx, n)];
+  }
+
+  /** Wat de grafiek toont bij het aanpassen: het gemeten vermogen rond de cyclus, of anders de cyclus zelf. */
+  _adjustView(cycle) {
+    const context = this._adjust?.context;
+    if (context && context.series) {
+      return { t0: context.start, t1: context.end, step: context.step_s, series: context.series, wide: true };
+    }
+    return { t0: cycle.start, t1: cycle.end, step: this._slot(cycle), series: cycle.series, wide: false };
+  }
+
+  /** Hoe ver het begin naar voren (minDs, ≤ 0) en het einde naar achteren (maxDe, ≥ 0) mag, in seconden. */
+  _adjustRange(cycle) {
+    const view = this._adjustView(cycle);
+    const context = this._adjust?.context;
+    const low = view.wide ? Math.max(view.t0, context.min_start) : cycle.start;
+    const high = view.wide ? Math.min(view.t1, context.max_end) : cycle.end;
+    return {
+      minDs: Math.min(0, Math.ceil((low - cycle.start) / ADJUST_STEP) * ADJUST_STEP),
+      maxDe: Math.max(0, Math.floor((high - cycle.end) / ADJUST_STEP) * ADJUST_STEP),
+    };
+  }
+
+  /** Zet de verschuiving van begin (ds) en einde (de) in seconden, binnen de grenzen en per 30 seconden. */
+  _setAdjust(cycle, ds, de, active) {
+    if (!this._adjust || this._adjust.cycleId !== cycle.cycle_id) return;
+    const { minDs, maxDe } = this._adjustRange(cycle);
+    const length = cycle.end - cycle.start;
+    const snap = (value) => Math.round(value / ADJUST_STEP) * ADJUST_STEP || 0;
+    ds = Math.max(minDs, snap(ds));
+    de = Math.min(maxDe, snap(de));
+    if (length + de - ds < ADJUST_MIN) {
+      if (active === "start") ds = Math.floor((length + de - ADJUST_MIN) / ADJUST_STEP) * ADJUST_STEP;
+      else de = Math.ceil((ADJUST_MIN - length + ds) / ADJUST_STEP) * ADJUST_STEP;
+    }
+    this._adjust = { ...this._adjust, ds, de, active };
+    this._render();
+  }
+
+  /** Geschat verbruik (kWh) tussen twee tijden, uit het gemeten vermogen rond de cyclus. */
+  _viewKwh(view, from, to) {
+    let wh = 0;
+    view.series.forEach((watt, i) => {
+      const a = Math.max(from, view.t0 + i * view.step);
+      const b = Math.min(to, view.t1, view.t0 + (i + 1) * view.step);
+      if (b > a) wh += (watt * (b - a)) / 3600;
+    });
+    return wh / 1000;
+  }
+
+  /** Haal het gemeten vermogen rond de cyclus op; zonder historie blijft alleen inkorten over. */
+  async _loadContext(cycleId) {
+    let context;
+    try {
+      context = await this._hass.callWS({ type: `${DOMAIN}/cycle_context`, entry_id: this._selected, cycle_id: cycleId });
+    } catch (err) {
+      context = { series: null };
+    }
+    if (!this._adjust || this._adjust.cycleId !== cycleId) return;
+    this._adjust = { ...this._adjust, context };
+    this._render();
   }
 
   // ---------------------------------------------------------------- opmaak
@@ -664,6 +766,7 @@ class EnergieAdviseurPanel extends HTMLElement {
     const value = typed !== undefined ? typed : cycle.program || "";
     const canSave = value.trim() !== "" && value.trim() !== (cycle.program || "") && !this._busy;
     const marked = this._marker && this._marker.cycleId === cycle.cycle_id;
+    const adjusting = this._adjust && this._adjust.cycleId === cycle.cycle_id;
     return `
       <section class="card" data-cycle="${esc(cycle.cycle_id)}">
         <div class="cycle-head">
@@ -674,15 +777,16 @@ class EnergieAdviseurPanel extends HTMLElement {
           <span class="num muted">${esc(t.peak)} ${Math.round(cycle.peak_w)} W</span>
           <span class="badge ${cycle.program ? "named" : ""}">${esc(cycle.program || t.unknown)}</span>
         </div>
-        ${this._chart(cycle)}
-        <p class="readout muted" data-readout>${esc(t.chartHint)}</p>
+        ${adjusting ? this._adjustChart(cycle) : this._chart(cycle)}
+        <p class="readout muted" data-readout>${esc(adjusting ? t.adjustHint : t.chartHint)}</p>
         <div class="row">
           <label class="grow">${esc(t.name)}
             <input type="text" list="ea-programs" maxlength="60" autocomplete="off" placeholder="${esc(t.namePlaceholder)}"
               value="${esc(value)}" data-field="name" data-focus="name-${esc(cycle.cycle_id)}">
           </label>
           <button class="primary" data-action="save" ${canSave ? "" : "disabled"}>${esc(t.save)}</button>
-          <button data-action="restore" title="${esc(t.refetchTitle)}" ${this._busy ? "disabled" : ""}>${esc(cycle.has_original ? t.undo : t.refetch)}</button>
+          <button class="toggle" data-action="adjust" aria-expanded="${adjusting ? "true" : "false"}" data-focus="adjust-${esc(cycle.cycle_id)}">${esc(t.adjust)}</button>
+          <button data-action="restore" title="${esc(cycle.has_original ? t.undoTitle : t.refetchTitle)}" ${this._busy ? "disabled" : ""}>${esc(cycle.has_original ? t.undo : t.refetch)}</button>
           <button class="danger" data-action="remove" data-focus="remove-${esc(cycle.cycle_id)}" ${this._busy ? "disabled" : ""}>${esc(t.remove)}</button>
         </div>
         ${
@@ -697,7 +801,99 @@ class EnergieAdviseurPanel extends HTMLElement {
             : ""
         }
         ${marked ? this._splitPanel(cycle) : ""}
+        ${adjusting ? this._adjustPanel(cycle) : ""}
       </section>`;
+  }
+
+  /** Grafiek bij het aanpassen: het vermogen rond de cyclus met een lijn voor het nieuwe begin en einde. */
+  _adjustChart(cycle) {
+    const t = this._t;
+    const view = this._adjustView(cycle);
+    const { ds, de, active } = this._adjust;
+    const peak = Math.max(...view.series, 1);
+    const magnitude = 10 ** Math.floor(Math.log10(peak));
+    const top = [1, 2, 2.5, 5, 10].map((f) => f * magnitude).find((v) => v >= peak);
+    const VB_W = this._dims.w;
+    const VB_H = this._dims.h;
+    const PLOT_W = VB_W - PLOT.left - PLOT.right;
+    const PLOT_H = VB_H - PLOT.top - PLOT.bottom;
+    const span = view.t1 - view.t0;
+    const x = (ts) => PLOT.left + (Math.min(view.t1, Math.max(view.t0, ts)) - view.t0) / span * PLOT_W;
+    const y = (w) => PLOT.top + PLOT_H - (w / top) * PLOT_H;
+    const base = PLOT.top + PLOT_H;
+
+    let path = `M${x(view.t0).toFixed(1)},${base}`;
+    let last = view.t0;
+    view.series.forEach((w, i) => {
+      const from = view.t0 + i * view.step;
+      if (from >= view.t1) return;
+      last = Math.min(view.t1, from + view.step);
+      path += ` L${x(from).toFixed(1)},${y(w).toFixed(1)} L${x(last).toFixed(1)},${y(w).toFixed(1)}`;
+    });
+    path += ` L${x(last).toFixed(1)},${base} Z`;
+
+    const grid = [0, 0.5, 1]
+      .map((f) => {
+        const gy = y(top * f);
+        return `<line class="grid" x1="${PLOT.left}" x2="${VB_W - PLOT.right}" y1="${gy}" y2="${gy}"></line>
+          <text x="${PLOT.left - 6}" y="${gy + 4}" text-anchor="end">${Math.round(top * f)} W</text>`;
+      })
+      .join("");
+    let ticks = "";
+    const count = this._dims.ticks;
+    for (let i = 0; i <= count; i += 1) {
+      const ts = view.t0 + (span * i) / count;
+      const anchor = i === 0 ? "start" : i === count ? "end" : "middle";
+      ticks += `<text x="${x(ts).toFixed(1)}" y="${VB_H - 6}" text-anchor="${anchor}">${esc(this._clock(ts))}</text>`;
+    }
+
+    const start = cycle.start + ds;
+    const end = cycle.end + de;
+    const band = (from, to) =>
+      to > from ? `<rect class="outside" x="${x(from)}" y="${PLOT.top}" width="${x(to) - x(from)}" height="${PLOT_H}"></rect>` : "";
+    const line = (ts, cls) => `<line class="${cls}" x1="${x(ts)}" x2="${x(ts)}" y1="${PLOT.top}" y2="${base}"></line>`;
+    return `<svg class="chart" viewBox="0 0 ${VB_W} ${VB_H}" role="img" tabindex="0" data-adjust data-focus="chart-${esc(cycle.cycle_id)}"
+        aria-label="${esc(t.adjustChartLabel)}. ${esc(t.adjustHint)}">
+      ${grid}<path class="area" d="${path}"></path>${band(view.t0, start)}${band(end, view.t1)}${ticks}
+      ${ds ? line(cycle.start, "was") : ""}${de ? line(cycle.end, "was") : ""}
+      ${line(start, `marker${active === "start" ? " active" : ""}`)}${line(end, `marker${active === "end" ? " active" : ""}`)}
+      <line class="hover" data-hover x1="0" x2="0" y1="${PLOT.top}" y2="${base}" visibility="hidden"></line>
+    </svg>`;
+  }
+
+  _adjustPanel(cycle) {
+    const t = this._t;
+    const { ds, de, context } = this._adjust;
+    const view = this._adjustView(cycle);
+    const { minDs, maxDe } = this._adjustRange(cycle);
+    const length = cycle.end - cycle.start;
+    const start = cycle.start + ds;
+    const end = cycle.end + de;
+    const range = (a, b) => `${this._clock(a, true)}–${this._clock(b, true)}`;
+    const energy =
+      view.wide && !cycle.paused_s ? ` · ${esc(t.approx)} ${esc(this._kwh(this._viewKwh(view, start, end)))}` : "";
+    const note = context === undefined ? t.adjustLoading : view.wide ? "" : t.adjustNoHistory;
+    const number = (field, label, value, min, max) =>
+      `<label>${esc(label)}
+        <input type="number" min="${min / 60}" max="${max / 60}" step="${ADJUST_STEP / 60}" value="${value / 60}"
+          data-field="${field}" data-focus="${field}-${esc(cycle.cycle_id)}">
+      </label>`;
+    return `
+      <div class="split">
+        <div class="row">
+          ${number("adjust-start", t.adjustStart, ds, minDs, length + de - ADJUST_MIN)}
+          ${number("adjust-end", t.adjustEnd, de, ADJUST_MIN - length + ds, maxDe)}
+          <span class="grow"><b>${esc(t.adjustNew)}: ${esc(range(start, end))}</b>
+            <span class="muted">· ${esc(this._duration(length + de - ds - (cycle.paused_s || 0), true))}${energy}
+              (${esc(t.adjustWas(range(cycle.start, cycle.end)))})</span></span>
+        </div>
+        ${note ? `<p class="${context === undefined ? "muted" : "error"}" role="status">${esc(note)}</p>` : ""}
+        <p class="muted">${esc(t.adjustNote)}${this._slot(cycle) >= 60 ? ` ${esc(t.adjustCoarse)}` : ""}</p>
+        <div class="row">
+          <button class="primary" data-action="adjust-apply" ${this._busy || (!ds && !de) ? "disabled" : ""}>${esc(t.adjustApply)}</button>
+          <button data-action="adjust-cancel">${esc(t.cancel)}</button>
+        </div>
+      </div>`;
   }
 
   _chart(cycle) {
@@ -814,8 +1010,18 @@ class EnergieAdviseurPanel extends HTMLElement {
     return Math.min(n - 1, Math.max(1, Math.round(fraction * n)));
   }
 
+  /** Tijdstip in de aanpasgrafiek onder de aanwijzer. */
+  _timeAt(svg, cycle, clientX) {
+    const view = this._adjustView(cycle);
+    const rect = svg.getBoundingClientRect();
+    const vbX = ((clientX - rect.left) / rect.width) * this._dims.w;
+    const fraction = Math.min(1, Math.max(0, (vbX - PLOT.left) / (this._dims.w - PLOT.left - PLOT.right)));
+    return view.t0 + fraction * (view.t1 - view.t0);
+  }
+
   _setMarker(cycle, idx) {
     if (cycle.series.length < 2) return;
+    this._adjust = null;
     this._marker = { cycleId: cycle.cycle_id, type: "at", idx: Math.min(cycle.series.length - 1, Math.max(1, idx)) };
     this._render();
   }
@@ -825,6 +1031,14 @@ class EnergieAdviseurPanel extends HTMLElement {
     if (svg) {
       const cycle = this._cycleOf(svg);
       if (!cycle) return;
+      if (svg.hasAttribute("data-adjust")) {
+        // de lijn die het dichtst bij de klik ligt verspringt
+        const ts = this._timeAt(svg, cycle, event.clientX);
+        const { ds, de } = this._adjust;
+        if (Math.abs(ts - (cycle.start + ds)) <= Math.abs(ts - (cycle.end + de))) this._setAdjust(cycle, ts - cycle.start, de, "start");
+        else this._setAdjust(cycle, ds, ts - cycle.end, "end");
+        return;
+      }
       if (!this._marker || this._marker.cycleId !== cycle.cycle_id) this._keep = "both";
       this._setMarker(cycle, this._slotAt(svg, cycle, event.clientX));
       return;
@@ -971,6 +1185,32 @@ class EnergieAdviseurPanel extends HTMLElement {
           return this._t.removed;
         }
       );
+    } else if (action === "adjust" && cycle) {
+      const open = !this._adjust || this._adjust.cycleId !== cycle.cycle_id;
+      this._marker = null;
+      this._adjust = open ? { cycleId: cycle.cycle_id, ds: 0, de: 0, active: "end", context: undefined } : null;
+      this._render();
+      if (open) this._loadContext(cycle.cycle_id);
+    } else if (action === "adjust-cancel") {
+      this._adjust = null;
+      this._render();
+    } else if (action === "adjust-apply" && cycle && this._adjust) {
+      const { ds, de } = this._adjust;
+      if (!ds && !de) return;
+      this._run(
+        () =>
+          this._service(
+            "adjust_cycle",
+            { appliance: appliance.entry_id, cycle_id: cycle.cycle_id, start_shift: ds / 60, end_shift: de / 60 },
+            true
+          ),
+        () => {
+          // met een ander begin krijgt de cyclus een ander id
+          this._adjust = null;
+          delete this._names[cycle.cycle_id];
+          return this._t.adjusted;
+        }
+      );
     } else if (action === "quiet" && cycle) {
       this._marker = { cycleId: cycle.cycle_id, type: "gap" };
       this._render();
@@ -1030,6 +1270,11 @@ class EnergieAdviseurPanel extends HTMLElement {
     if (field === "keep") {
       this._keep = event.target.value;
       this._render();
+    } else if ((field === "adjust-start" || field === "adjust-end") && cycle && this._adjust) {
+      const seconds = Number(event.target.value) * 60;
+      if (!Number.isFinite(seconds)) return;
+      if (field === "adjust-start") this._setAdjust(cycle, seconds, this._adjust.de, "start");
+      else this._setAdjust(cycle, this._adjust.ds, seconds, "end");
     } else if (field === "minutes" && cycle) {
       const minutes = Number(event.target.value);
       if (Number.isFinite(minutes)) this._setMarker(cycle, Math.round((minutes * 60) / this._slot(cycle)));
@@ -1060,6 +1305,13 @@ class EnergieAdviseurPanel extends HTMLElement {
     const cycle = this._cycleOf(svg);
     if (!cycle) return;
     event.preventDefault();
+    if (svg.hasAttribute("data-adjust")) {
+      const { ds, de, active } = this._adjust;
+      const move = (event.shiftKey ? 300 : ADJUST_STEP) * (event.key === "ArrowRight" ? 1 : -1);
+      if (active === "start") this._setAdjust(cycle, ds + move, de, "start");
+      else this._setAdjust(cycle, ds, de + move, "end");
+      return;
+    }
     const current =
       this._marker && this._marker.cycleId === cycle.cycle_id && this._marker.type === "at"
         ? this._marker.idx
@@ -1074,9 +1326,21 @@ class EnergieAdviseurPanel extends HTMLElement {
     const cycle = this._cycleOf(svg);
     const line = svg.querySelector("[data-hover]");
     const readout = svg.closest("[data-cycle]").querySelector("[data-readout]");
+    const adjusting = svg.hasAttribute("data-adjust");
     if (!cycle || event.type === "pointerleave") {
       line.setAttribute("visibility", "hidden");
-      readout.textContent = this._t.chartHint;
+      readout.textContent = adjusting ? this._t.adjustHint : this._t.chartHint;
+      return;
+    }
+    if (adjusting) {
+      const view = this._adjustView(cycle);
+      const ts = this._timeAt(svg, cycle, event.clientX);
+      const at = PLOT.left + ((ts - view.t0) / (view.t1 - view.t0)) * (this._dims.w - PLOT.left - PLOT.right);
+      line.setAttribute("x1", at);
+      line.setAttribute("x2", at);
+      line.setAttribute("visibility", "visible");
+      const watt = view.series[Math.min(view.series.length - 1, Math.floor((ts - view.t0) / view.step))];
+      readout.textContent = `${this._clock(ts, true)} · ${Math.round(watt ?? 0)} W`;
       return;
     }
     const idx = this._slotAt(svg, cycle, event.clientX);
