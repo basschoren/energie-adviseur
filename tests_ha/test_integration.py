@@ -693,6 +693,10 @@ async def test_panel_and_cycles_websocket(hass: HomeAssistant, hass_client, hass
     response = await client.get(module_url)
     assert response.status == 200
     assert "energie-adviseur-panel" in await response.text()
+    # de dashboardkaart wordt meegeleverd
+    response = await client.get("/energie_adviseur_static/energie-adviseur-card.js")
+    assert response.status == 200
+    assert "energie-adviseur-card" in await response.text()
 
     # herladen van een onderdeel registreert de pagina niet opnieuw
     assert await hass.config_entries.async_reload(washer.entry_id)

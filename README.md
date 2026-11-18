@@ -203,7 +203,7 @@ content: "{{ state_attr('sensor.energie_adviseur_dagadvies', 'advies') }}"
 
 ### Kaart voor de wasdag en het advies
 
-In de map `dashboard` van deze repository staat `energie-adviseur-card.js`: een kaart met het aantal wasjes, het was- en droogprogramma per ronde, de planning als tijdlijn en per apparaat het programma en het beste startmoment. Zet het bestand in `config/www`, voeg `/local/energie-adviseur-card.js` toe als dashboardbron (JavaScript-module) en gebruik:
+De integratie levert een dashboardkaart mee: een kaart met het aantal wasjes, het was- en droogprogramma per ronde, de planning als tijdlijn en per apparaat het programma en het beste startmoment. Voeg `/energie_adviseur_static/energie-adviseur-card.js` toe als dashboardbron (Instellingen > Dashboards > Bronnen, type JavaScript-module) en gebruik:
 
 ```yaml
 type: custom:energie-adviseur-card

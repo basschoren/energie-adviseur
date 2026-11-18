@@ -26,11 +26,19 @@ PANEL_URL_PATH = "energie-adviseur"
 PANEL_ELEMENT = "energie-adviseur-panel"
 PANEL_JS_URL = "/energie_adviseur_static/panel.js"
 PANEL_JS_FILE = Path(__file__).parent / "frontend" / "panel.js"
+# dashboardkaart voor de wasdag en het advies; als bron toe te voegen aan een dashboard
+CARD_JS_URL = "/energie_adviseur_static/energie-adviseur-card.js"
+CARD_JS_FILE = Path(__file__).parent / "frontend" / "energie-adviseur-card.js"
 
 
 async def async_setup_panel(hass: HomeAssistant) -> None:
     integration = await async_get_integration(hass, DOMAIN)
-    await hass.http.async_register_static_paths([StaticPathConfig(PANEL_JS_URL, str(PANEL_JS_FILE), False)])
+    await hass.http.async_register_static_paths(
+        [
+            StaticPathConfig(PANEL_JS_URL, str(PANEL_JS_FILE), False),
+            StaticPathConfig(CARD_JS_URL, str(CARD_JS_FILE), False),
+        ]
+    )
     await panel_custom.async_register_panel(
         hass,
         frontend_url_path=PANEL_URL_PATH,
