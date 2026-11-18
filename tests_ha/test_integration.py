@@ -209,6 +209,146 @@ async def test_appliance_learns_and_advises(hass: HomeAssistant) -> None:
     assert len(washer.runtime_data.unlabeled()) == 3
 
 
+async def test_laundry_rounds(hass: HomeAssistant) -> None:
+    """Wasdag met een eigen was- en droogprogramma per ronde."""
+    set_prices(hass)
+    hass.states.async_set("sensor.droger_power", "0", {"unit_of_measurement": "W"})
+    hass.states.async_set("sensor.was_power", "0", {"unit_of_measurement": "W"})
+    await add(hass, HUB, "Energie Adviseur", "hub")
+    dryer = await add(hass, appliance("Droger", "dryer", "sensor.droger_power"), "Droger", "sensor.droger_power")
+    washer = await add(
+        hass, appliance("Wasmachine", "washer", "sensor.was_power", dryer_entry=dryer.entry_id), "Wasmachine", "sensor.was_power"
+    )
+    wm, dm = washer.runtime_data, dryer.runtime_data
+    for manager, segments, name in (
+        (wm, WASH, "Katoen 40"),
+        (wm, [(10, 2000), (20, 150)], "Kort"),
+        (dm, DRY, "Kastdroog"),
+        (dm, [(50, 900)], "Strijkdroog"),
+    ):
+        run_cycle(manager, segments)
+        manager.label_cycle(name)
+    wm.select_program("Katoen 40")
+    wm.set_dry_program("Kastdroog")
+
+    def plan():
+        return hass.states.get(entity(hass, washer, "laundry_plan")).attributes
+
+    def minutes(step):
+        return (dt_util.parse_datetime(step["eind"]) - dt_util.parse_datetime(step["start"])).total_seconds() / 60
+
+    # drie wasjes: elke ronde volgt eerst het gekozen programma
+    await hass.services.async_call("number", "set_value", {"entity_id": entity(hass, washer, "loads"), "value": 3}, blocking=True)
+    await wm.async_replan()
+    assert [(r["wasprogramma"], r["droogprogramma"]) for r in plan()["rondes"]] == [("Katoen 40", "Kastdroog")] * 3
+    assert not any(r["eigen_wasprogramma"] or r["eigen_droogprogramma"] or r["was_draait"] for r in plan()["rondes"])
+    assert plan()["wasprogrammas"] == ["Katoen 40", "Kort"] and plan()["droogprogrammas"] == ["Kastdroog", "Strijkdroog"]
+
+    # ronde 2 krijgt een eigen was- en droogprogramma
+    await hass.services.async_call(
+        DOMAIN, "set_round_program",
+        {"appliance": "Wasmachine", "round": 2, "wash_program": "kort", "dry_program": "Strijkdroog"}, blocking=True,
+    )
+    await wm.async_replan()
+    attrs = plan()
+    steps = {s["stap"]: s for s in attrs["planning"]}
+    assert sorted(steps) == ["Drogen 1", "Drogen 2", "Drogen 3", "Was 1", "Was 2", "Was 3"]
+    assert [steps[k]["programma"] for k in ("Was 1", "Was 2", "Was 3")] == ["Katoen 40", "Kort", "Katoen 40"]
+    assert [steps[k]["programma"] for k in ("Drogen 1", "Drogen 2", "Drogen 3")] == ["Kastdroog", "Strijkdroog", "Kastdroog"]
+    assert [minutes(steps[k]) for k in ("Was 1", "Was 2", "Drogen 1", "Drogen 2")] == [95, 30, 110, 50]
+    assert (steps["Was 2"]["soort"], steps["Drogen 2"]["soort"], steps["Was 2"]["ronde"]) == ("was", "drogen", 2)
+    for n in (1, 2, 3):
+        assert steps[f"Drogen {n}"]["start"] > steps[f"Was {n}"]["eind"]  # drogen na de was van dezelfde ronde
+    assert steps["Was 2"]["start"] < steps["Drogen 1"]["eind"]  # de wasmachine draait door tijdens het drogen
+    assert sum(s["kosten"] for s in attrs["planning"]) == pytest.approx(attrs["kosten"], abs=0.001)
+    assert attrs["besparing"] == pytest.approx(attrs["kosten_zo_vroeg_mogelijk"] - attrs["kosten"], abs=0.0001)
+    assert attrs["besparing"] >= 0 and attrs["niet_ingepland"] == 0 and attrs["toelichting"] is None
+    assert attrs["rondes"][1] == {
+        "ronde": 2, "wasprogramma": "Kort", "droogprogramma": "Strijkdroog",
+        "eigen_wasprogramma": True, "eigen_droogprogramma": True, "was_draait": False,
+    }
+
+    # fouten: een ronde die niet bestaat, een onbekend programma, niets opgegeven
+    for data in ({"round": 4, "wash_program": "Kort"}, {"round": 1, "wash_program": "Wol"}, {"round": 1, "dry_program": "Wol"}, {"round": 1}):
+        with pytest.raises(HomeAssistantError):
+            await hass.services.async_call(DOMAIN, "set_round_program", {"appliance": "Wasmachine", **data}, blocking=True)
+
+    # ronde 1 is gewassen: de rondes schuiven op en zijn droogprogramma ligt klaar
+    await hass.services.async_call(
+        DOMAIN, "set_round_program", {"appliance": "Wasmachine", "round": 1, "dry_program": "Strijkdroog"}, blocking=True
+    )
+    run_cycle(wm, WASH)
+    await hass.async_block_till_done()
+    await wm.async_replan()
+    attrs = plan()
+    assert (wm.loads, wm.pending_dry) == (2, 1)
+    assert [(r["wasprogramma"], r["droogprogramma"]) for r in attrs["rondes"]] == [("Kort", "Strijkdroog"), ("Katoen 40", "Kastdroog")]
+    assert attrs["droogbeurten_die_klaarliggen"] == ["Strijkdroog"]
+    loose = next(s for s in attrs["planning"] if s["stap"] == "Drogen (ligt klaar)")
+    assert (loose["programma"], minutes(loose), loose["ronde"]) == ("Strijkdroog", 50, None)
+
+    # de was van ronde 1 draait: alleen zijn droogbeurt wordt nog gepland, de volgende was is ronde 2
+    wm._feed(time.time() - 120, 2000)
+    wm._feed(time.time(), 2000)
+    assert wm.round_one_running
+    await wm.async_replan()
+    attrs = plan()
+    assert [s["stap"] for s in sorted(attrs["planning"], key=lambda s: (s["soort"], s["ronde"] or 0))] == [
+        "Drogen (ligt klaar)", "Drogen 1", "Drogen 2", "Was 2",
+    ]
+    by_name = {s["stap"]: s for s in attrs["planning"]}
+    assert (by_name["Drogen 1"]["programma"], by_name["Was 2"]["programma"]) == ("Strijkdroog", "Katoen 40")
+    assert attrs["rondes"][0]["was_draait"] and not attrs["rondes"][1]["was_draait"]
+    wm.detector._reset(start=None)
+
+    # de droger is klaar: de droogbeurt die klaarlag is weg
+    run_cycle(dm, [(50, 900)])
+    await hass.async_block_till_done()
+    assert (wm.pending_dry, wm.pending_dry_programs) == (0, [])
+
+    # minder wasjes: rondes vervallen; meer wasjes: nieuwe rondes volgen het gekozen programma
+    wm.set_loads(1)
+    assert [r["wasprogramma"] for r in wm.rounds()] == ["Kort"]
+    wm.set_loads(3)
+    assert [(r["wasprogramma"], r["eigen_wasprogramma"]) for r in wm.rounds()] == [("Kort", True), ("Katoen 40", False), ("Katoen 40", False)]
+    wm.select_program("Kort")
+    assert [r["wasprogramma"] for r in wm.rounds()] == ["Kort"] * 3
+    wm.select_program("Katoen 40")
+
+    # opslaan en herladen behoudt de rondes
+    assert await hass.config_entries.async_reload(washer.entry_id)
+    await hass.async_block_till_done()
+    wm = washer.runtime_data
+    assert [(r["wasprogramma"], r["droogprogramma"]) for r in wm.rounds()][0] == ("Kort", "Strijkdroog")
+
+    # een leeg programma volgt weer het gekozen programma
+    await hass.services.async_call(DOMAIN, "set_round_program", {"appliance": "Wasmachine", "round": 1, "dry_program": ""}, blocking=True)
+    assert (wm.rounds()[0]["droogprogramma"], wm.rounds()[0]["eigen_droogprogramma"]) == ("Kastdroog", False)
+
+    # samenvoegen en verwijderen van programma's werkt door in de rondes
+    wm.set_round_program(2, dry="Strijkdroog")
+    dm.rename_program("Strijkdroog", "Kastdroog", merge=True)
+    assert (wm.rounds()[1]["droogprogramma"], wm.rounds()[1]["eigen_droogprogramma"]) == ("Kastdroog", True)
+    wm.delete_program("Kort")
+    assert (wm.rounds()[0]["wasprogramma"], wm.rounds()[0]["eigen_wasprogramma"]) == ("Katoen 40", False)
+
+    # prijzen voor maar 5 uur: één ronde past nog, de rest staat niet in het plan en dat wordt gemeld
+    start = dt_util.now().replace(minute=0, second=0, microsecond=0)
+    raw = [
+        {"start": (start + timedelta(hours=i)).isoformat(), "end": (start + timedelta(hours=i + 1)).isoformat(), "value": 0.2}
+        for i in range(5)
+    ]
+    hass.states.async_set(PRICE, "0.20", {"unit_of_measurement": "EUR/kWh", "raw_today": raw})
+    await wm.async_replan()
+    attrs = plan()
+    assert [s["stap"] for s in attrs["planning"]] == ["Was 1", "Drogen 1"]
+    assert attrs["niet_ingepland"] == 2
+    assert attrs["toelichting"].startswith("De stroomprijzen zijn bekend tot ") and "2 wasjes passen" in attrs["toelichting"]
+    wm.set_loads(0)
+    await wm.async_replan()
+    assert plan()["planning"] == [] and plan()["toelichting"] is None
+
+
 async def test_power_sensor_drives_detector(hass: HomeAssistant, freezer) -> None:
     set_prices(hass)
     hass.states.async_set("sensor.vw_power", "0", {"unit_of_measurement": "W"})

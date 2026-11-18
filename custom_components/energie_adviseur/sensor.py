@@ -149,8 +149,16 @@ APPLIANCE: tuple[EADescription, ...] = (
         attrs=lambda m: {
             "planning": m.plan_steps(),
             "kosten": m.plan.cost if m.plan else None,
+            "kosten_zo_vroeg_mogelijk": m.plan.cost_asap if m.plan else None,
+            "besparing": m.plan_saving,
             "nog_te_wassen": m.loads,
             "nog_te_drogen": m.pending_dry,
+            "rondes": m.rounds(),
+            "droogbeurten_die_klaarliggen": m.pending_dry_names(),
+            "niet_ingepland": m.unplanned,
+            "toelichting": m.plan_note(),
+            "wasprogrammas": m.program_names(),
+            "droogprogrammas": m.dryer.program_names() if m.dryer else [],
         },
     ),
 )

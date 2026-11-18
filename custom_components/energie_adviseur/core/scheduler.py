@@ -145,6 +145,7 @@ class Job:
     profile: list[float]
     earliest: int = 0
     start: int = -1
+    cost: float = 0.0  # meerkosten van deze beurt in het plan
 
     @property
     def end(self) -> int:
@@ -156,6 +157,7 @@ class ChainPlan:
     jobs: list[Job] = field(default_factory=list)
     cost: float = 0.0
     t0: float = 0.0
+    cost_asap: float | None = None  # kosten als alles zo vroeg mogelijk achter elkaar start
 
     def as_list(self) -> list[dict]:
         return [
@@ -164,15 +166,25 @@ class ChainPlan:
                 "load": j.load,
                 "start": self.t0 + j.start * SLOT_S,
                 "end": self.t0 + j.end * SLOT_S,
+                "cost": j.cost,
             }
             for j in sorted(self.jobs, key=lambda j: j.start)
         ]
 
 
+def _per_job(profile: list, count: int) -> list[list[float]]:
+    """Eén profiel voor alle beurten, of een lijst met een profiel per beurt."""
+    if profile and isinstance(profile[0], (list, tuple)):
+        if len(profile) != count:
+            raise ValueError("aantal profielen klopt niet met het aantal beurten")
+        return [list(p) for p in profile]
+    return [profile] * count
+
+
 def plan_chain(
     grid: Grid,
-    wash_profile: list[float],
-    dry_profile: list[float],
+    wash_profile: list,
+    dry_profile: list,
     loads: int,
     pending_dry: int = 0,
     washer_free_at: float | None = None,
@@ -186,6 +198,11 @@ def plan_chain(
 
     Regels: elke machine één lading tegelijk; drogen begint minstens gap_s na
     het einde van de was en hooguit max_wait_s daarna.
+
+    `wash_profile` en `dry_profile` zijn één profiel voor alle beurten, of een lijst
+    met een profiel per beurt: per wasje, en voor de droger eerst de losse
+    droogbeurten en dan per wasje. `pending_dry_ready_at` geldt voor de laatste losse
+    droogbeurt: de was die nu nog draait.
     """
     size = len(grid)
     gap = int(-(-gap_s // SLOT_S))
@@ -194,13 +211,17 @@ def plan_chain(
     d_free = grid.index(dryer_free_at) if dryer_free_at else 0
     ready = grid.index(pending_dry_ready_at) if pending_dry_ready_at else 0
 
-    washes = [Job("wash", i + 1, wash_profile, w_free) for i in range(loads)]
-    dries_loose = [Job("dry", 0, dry_profile, max(d_free, ready)) for _ in range(pending_dry)]
-    dries = [Job("dry", i + 1, dry_profile, d_free) for i in range(loads)]
+    wash_profiles = _per_job(wash_profile, loads)
+    dry_profiles = _per_job(dry_profile, pending_dry + loads)
+    if not (loads or pending_dry) or not all(wash_profiles) or not all(dry_profiles):
+        return None
+    washes = [Job("wash", i + 1, wash_profiles[i], w_free) for i in range(loads)]
+    dries_loose = [
+        Job("dry", 0, dry_profiles[i], max(d_free, ready) if i == pending_dry - 1 else d_free) for i in range(pending_dry)
+    ]
+    dries = [Job("dry", i + 1, dry_profiles[pending_dry + i], d_free) for i in range(loads)]
     dry_order = dries_loose + dries
     jobs = washes + dry_order
-    if not jobs or (loads and not wash_profile) or (dry_order and not dry_profile):
-        return None
 
     def ok(idx: int) -> bool:
         return allowed is None or (idx < len(allowed) and allowed[idx])
@@ -264,19 +285,25 @@ def plan_chain(
                     base[job.start + i] += w
         return base
 
-    def total() -> float:
+    def total(assign: bool = False) -> float:
         base = [0.0] * size
         cost = 0.0
         for job in jobs:
-            cost += _added_cost(grid, base, job.start, job.profile)
+            added = _added_cost(grid, base, job.start, job.profile)
+            if assign:
+                job.cost = round(added, 4)
+            cost += added
             for i, w in enumerate(job.profile):
                 base[job.start + i] += w
         return cost
 
     best: tuple[float, list[int]] | None = None
+    cost_asap: float | None = None
     for origin in range(0, size, 12):  # elk uur een startpunt
         if not compact(origin):
             break
+        if origin == 0:
+            cost_asap = round(total(), 4)
         for _ in range(8):
             improved = False
             for job in jobs:
@@ -301,4 +328,5 @@ def plan_chain(
         return None
     for job, start in zip(jobs, best[1]):
         job.start = start
-    return ChainPlan(jobs=jobs, cost=round(best[0], 4), t0=grid.t0)
+    total(assign=True)
+    return ChainPlan(jobs=jobs, cost=round(best[0], 4), t0=grid.t0, cost_asap=cost_asap)

@@ -352,6 +352,28 @@
         }
       }
     },
+    "set_round_program": {
+      "name": "Set programme for a laundry round",
+      "description": "Choose the wash and/or dry programme for one round of the laundry plan. An empty name follows the selected programme again.",
+      "fields": {
+        "appliance": {
+          "name": "Washing machine",
+          "description": "The washing machine."
+        },
+        "round": {
+          "name": "Round",
+          "description": "Number of the round, counted from the next wash."
+        },
+        "wash_program": {
+          "name": "Wash programme",
+          "description": "Name of a learned wash programme; empty follows the programme for advice."
+        },
+        "dry_program": {
+          "name": "Dry programme",
+          "description": "Name of a learned programme of the linked dryer; empty follows the selected dry programme."
+        }
+      }
+    },
     "delete_cycle": {
       "name": "Delete cycle",
       "description": "Remove a cycle, for example when the same run was detected twice. Importing history does not bring it back.",

@@ -294,6 +294,39 @@ class ChainTest(unittest.TestCase):
     def test_does_not_fit(self):
         self.assertIsNone(plan_chain(build_grid(T0, hourly([0.2] * 3)), self.WASH, self.DRY, 2))
 
+    def test_programme_per_round(self):
+        short_wash, short_dry = [1500.0] * 6, [800.0] * 10
+        grid = build_grid(T0, hourly([0.30, 0.28, 0.25, 0.10, 0.08, 0.09, 0.20, 0.30, 0.32, 0.15, 0.12, 0.25] * 2))
+        plan = plan_chain(grid, [self.WASH, short_wash, self.WASH], [self.DRY, short_dry, self.DRY], 3)
+        washes = [j for j in plan.jobs if j.kind == "wash"]
+        dries = [j for j in plan.jobs if j.kind == "dry"]
+        self.assertEqual([len(j.profile) for j in washes], [len(self.WASH), 6, len(self.WASH)])
+        self.assertEqual([len(j.profile) for j in dries], [len(self.DRY), 10, len(self.DRY)])
+        for w, d in zip(washes, dries):
+            self.assertGreaterEqual(d.start, w.end + self.GAP)
+        for a, b in zip(washes, washes[1:]):
+            self.assertGreaterEqual(b.start, a.end + self.GAP)
+        for a, b in zip(dries, dries[1:]):
+            self.assertGreaterEqual(b.start, a.end)
+        # de wasmachine draait door terwijl de droger bezig is
+        self.assertLess(washes[1].start, dries[0].end)
+        # kosten per beurt tellen op tot het totaal; het plan is niet duurder dan alles zo vroeg mogelijk
+        self.assertAlmostEqual(sum(j["cost"] for j in plan.as_list()), plan.cost, delta=0.001)
+        self.assertLessEqual(plan.cost, plan.cost_asap)
+        # een korter programma maakt de wasdag goedkoper dan drie keer het lange
+        self.assertLess(plan.cost, plan_chain(grid, self.WASH, self.DRY, 3).cost)
+
+    def test_programme_per_loose_dry_run(self):
+        short_dry = [800.0] * 10
+        grid = build_grid(T0, hourly([0.2] * 16))
+        plan = plan_chain(grid, [self.WASH], [short_dry, self.DRY, self.DRY], 1, pending_dry=2, pending_dry_ready_at=T0 + 3600)
+        loose = [j for j in plan.jobs if j.kind == "dry" and j.load == 0]
+        self.assertEqual([len(j.profile) for j in loose], [10, len(self.DRY)])
+        # alleen de laatste losse droogbeurt (de was die nog draait) moet wachten tot die klaar is
+        self.assertGreaterEqual(loose[1].start, 12)
+        with self.assertRaises(ValueError):
+            plan_chain(grid, [self.WASH], [self.DRY], 1, pending_dry=2)
+
     def test_as_list_is_sorted(self):
         plan = plan_chain(build_grid(T0, hourly([0.2] * 12)), self.WASH, self.DRY, 2)
         starts = [j["start"] for j in plan.as_list()]

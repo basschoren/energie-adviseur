@@ -136,6 +136,20 @@ Wasdag (bij de wasmachine):
 
 - Zet **Aantal wasjes vandaag** en kies het **Droogprogramma**.
 - **Wasplanning** toont de eerstvolgende stap; het attribuut `planning` bevat alle start- en eindtijden.
+- **Programma per ronde**: elke ronde volgt het *Programma voor advies* en het *Droogprogramma*, tot je voor die ronde iets anders kiest met de actie `energie_adviseur.set_round_program`:
+
+  ```yaml
+  action: energie_adviseur.set_round_program
+  data:
+    appliance: Wasmachine
+    round: 2
+    wash_program: Katoen 60
+    dry_program: Strijkdroog
+  ```
+
+  Een lege naam laat de ronde weer het gekozen programma volgen. Is een was klaar, dan schuiven de rondes op en ligt de droogbeurt van die ronde klaar met zijn eigen programma. Draait de wasmachine terwijl er nog wasjes op de teller staan, dan is dat ronde 1.
+- De planning rekent met de duur en het verbruik van het programma van elke ronde. De wasmachine draait door terwijl de droger bezig is; een droogbeurt begint minstens 10 minuten en hooguit 3 uur na de was van dezelfde ronde.
+- Attributen van **Wasplanning**: `planning` (per stap ook `programma`, `ronde`, `soort` en `kosten`), `rondes`, `droogbeurten_die_klaarliggen`, `kosten`, `besparing` (ten opzichte van alles zo vroeg mogelijk achter elkaar draaien), `wasprogrammas` en `droogprogrammas`. Passen niet alle wasjes binnen de bekende prijzen, dan staan de laatste rondes niet in het plan: `niet_ingepland` telt ze en `toelichting` zegt tot wanneer de prijzen bekend zijn.
 - De teller loopt af wanneer een was klaar is. Een was die klaar is maar nog niet gedroogd, blijft in de planning staan.
 
 Verwarming:

@@ -122,6 +122,13 @@ class ApplianceManager:
         self.loads = 0
         self.pending_dry = 0
         self.dry_program: str | None = None
+        # programma per ronde van de wasdag (programma-id; None volgt het gekozen programma)
+        self.wash_rounds: list[str | None] = []  # per wasje dat nog moet draaien
+        self.dry_rounds: list[str | None] = []  # de droogbeurt bij elk van die wasjes
+        self.pending_dry_programs: list[str | None] = []  # per droogbeurt die klaarligt
+        self.plan_names: dict[str, list[str]] = {}  # programmanamen bij de beurten in het plan
+        self.plan_offset = 0  # 1 als ronde 1 nu draait: het plan begint dan bij was 2
+        self.unplanned = 0  # wasjes die niet meer binnen de bekende prijzen passen
         self.advice: Advice | None = None  # beste start over alle bekende prijzen
         self.advice_today: Advice | None = None  # beste start die vandaag begint
         self.advice_tomorrow: Advice | None = None  # beste start morgen; alleen als de prijzen van morgen bekend zijn
@@ -173,6 +180,10 @@ class ApplianceManager:
         self.loads = int(stored.get("loads", 0))
         self.pending_dry = int(stored.get("pending_dry", 0))
         self.dry_program = stored.get("dry_program")
+        self.wash_rounds = list(stored.get("wash_rounds", []))
+        self.dry_rounds = list(stored.get("dry_rounds", []))
+        self.pending_dry_programs = list(stored.get("pending_dry_programs", []))
+        self._sync_rounds()
         # een lopende meting alleen hervatten als de manier van detecteren niet is gewijzigd
         if stored.get("detector") and stored.get("state_mode", False) == self.detector.config.state_mode:
             self.detector.load(stored["detector"])
@@ -216,6 +227,9 @@ class ApplianceManager:
             "loads": self.loads,
             "pending_dry": self.pending_dry,
             "dry_program": self.dry_program,
+            "wash_rounds": self.wash_rounds,
+            "dry_rounds": self.dry_rounds,
+            "pending_dry_programs": self.pending_dry_programs,
             "detector": self.detector.to_dict(),
             "state_mode": self.detector.config.state_mode,
         }
@@ -303,8 +317,12 @@ class ApplianceManager:
         if quiet:
             return
         if self.is_washer and self.loads > 0:
+            # deze ronde is gewassen: zijn droogprogramma sluit achteraan bij wat klaarligt
+            self._sync_rounds()
             self.loads -= 1
             self.pending_dry += 1
+            self.wash_rounds.pop(0)
+            self.pending_dry_programs.append(self.dry_rounds.pop(0))
         self._save()
         self.hass.bus.async_fire(
             EVENT_CYCLE_FINISHED,
@@ -336,7 +354,9 @@ class ApplianceManager:
         """Een droogbeurt van de gekoppelde droger is klaar."""
         if self.is_washer and event.data.get("entry_id") == self.entry.data.get(CONF_DRYER_ENTRY):
             if self.pending_dry > 0:
+                self._sync_rounds()
                 self.pending_dry -= 1
+                self.pending_dry_programs.pop(0)
                 self._save()
                 self.hass.async_create_task(self.async_replan())
 
@@ -447,9 +467,16 @@ class ApplianceManager:
         del self.programs[source.program_id]
         if self.selected == source.program_id:
             self.selected = target.program_id
+        self.wash_rounds = [target.program_id if p == source.program_id else p for p in self.wash_rounds]
         for washer in self._washers():
+            swap = lambda rounds: [target.program_id if p == source.program_id else p for p in rounds]  # noqa: E731
+            touched = washer.dry_program == source.program_id or source.program_id in (
+                washer.dry_rounds + washer.pending_dry_programs
+            )
             if washer.dry_program == source.program_id:
                 washer.dry_program = target.program_id
+            washer.dry_rounds, washer.pending_dry_programs = swap(washer.dry_rounds), swap(washer.pending_dry_programs)
+            if touched:
                 washer._changed()
         self._rename_running(source.name, target.name)
         rebuild(target, self.cycles)
@@ -467,9 +494,10 @@ class ApplianceManager:
         if self.selected == program.program_id:
             self.selected = None
         for washer in self._washers():
+            # rondes met dit programma volgen daarna vanzelf weer het gekozen droogprogramma
             if washer.dry_program == program.program_id:
                 washer.dry_program = None
-                washer._changed()
+            washer._changed()
         if self.running_name is not None and self.running_name["name"].casefold() == program.name.casefold():
             self.running_name = None
         self._changed()
@@ -588,7 +616,72 @@ class ApplianceManager:
 
     def set_loads(self, value: int) -> None:
         self.loads = max(0, int(value))
+        self._sync_rounds()
         self._changed()
+
+    def _sync_rounds(self) -> None:
+        """Houd de lijsten met programma's per ronde even lang als het aantal wasjes en droogbeurten."""
+        for name, count in (("wash_rounds", self.loads), ("dry_rounds", self.loads), ("pending_dry_programs", self.pending_dry)):
+            rounds = getattr(self, name)
+            setattr(self, name, (rounds + [None] * count)[:count])
+
+    def _wash_program(self, program_id: str | None) -> Program | None:
+        """Het wasprogramma van een ronde; zonder eigen keuze (of na verwijderen) het gekozen programma."""
+        program = self.programs.get(program_id or "")
+        return program if program and program.count else self.active_program
+
+    def _dry_program(self, program_id: str | None) -> Program | None:
+        dryer = self.dryer
+        program = dryer.programs.get(program_id or "") if dryer else None
+        return program if program and program.count else self.active_dry_program
+
+    @property
+    def round_one_running(self) -> bool:
+        """Draait de wasmachine terwijl er nog wasjes op de teller staan? Dan is dat ronde 1."""
+        return self.is_washer and self.detector.running and self.loads > 0
+
+    def set_round_program(self, round_no: int, wash: str | None = None, dry: str | None = None) -> None:
+        """Kies voor één ronde het was- en/of droogprogramma; een lege naam volgt weer het gekozen programma."""
+        self._sync_rounds()
+        index = int(round_no) - 1
+        if not 0 <= index < self.loads:
+            raise HomeAssistantError(f"Ronde {round_no} bestaat niet; er staan {self.loads} wasjes gepland")
+        if wash is not None:
+            program = self.program_by_name(wash) if wash.strip() else None
+            if wash.strip() and program is None:
+                raise HomeAssistantError(f"Onbekend programma: {wash}")
+            self.wash_rounds[index] = program.program_id if program else None
+        if dry is not None:
+            dryer = self.dryer
+            program = dryer.program_by_name(dry) if dryer and dry.strip() else None
+            if dry.strip() and program is None:
+                raise HomeAssistantError(f"Onbekend droogprogramma: {dry}")
+            self.dry_rounds[index] = program.program_id if program else None
+        self._changed()
+
+    def rounds(self) -> list[dict[str, Any]]:
+        """De rondes van de wasdag met het programma dat voor elke ronde geldt."""
+        self._sync_rounds()
+        out = []
+        for i in range(self.loads):
+            wash, dry = self._wash_program(self.wash_rounds[i]), self._dry_program(self.dry_rounds[i])
+            out.append(
+                {
+                    "ronde": i + 1,
+                    "wasprogramma": wash.name if wash else None,
+                    "droogprogramma": dry.name if dry else None,
+                    # False: de ronde volgt het gekozen programma en verandert daarmee mee
+                    "eigen_wasprogramma": wash is not None and wash.program_id == self.wash_rounds[i],
+                    "eigen_droogprogramma": dry is not None and dry.program_id == self.dry_rounds[i],
+                    "was_draait": i == 0 and self.round_one_running,
+                }
+            )
+        return out
+
+    def pending_dry_names(self) -> list[str | None]:
+        self._sync_rounds()
+        programs = [self._dry_program(p) for p in self.pending_dry_programs]
+        return [p.name if p else None for p in programs]
 
     def set_dry_program(self, name: str) -> None:
         dryer = self.dryer
@@ -666,51 +759,104 @@ class ApplianceManager:
         if not self.is_washer:
             return
         async with self._plan_lock:
-            dryer, wash, dry = self.dryer, self.active_program, self.active_dry_program
+            self._sync_rounds()
+            dryer = self.dryer
             market = get_market(self.hass)
             await market.async_refresh_solar()
             grid = market.grid()
-            loads, pending = self.loads, self.pending_dry
-            washer_free = self._busy_until(wash)
+            washes = [self._wash_program(p) for p in self.wash_rounds]
+            dries = [self._dry_program(p) for p in self.dry_rounds]
+            loose = [self._dry_program(p) for p in self.pending_dry_programs]
+            washer_free = self._busy_until(washes[0] if washes else self.active_program)
             ready = None
-            if washer_free is not None and loads > 0:
-                # de was die nu draait telt mee als wasje van vandaag
-                loads, pending, ready = loads - 1, pending + 1, washer_free + 600
-            if dryer is None or wash is None or dry is None or grid is None or loads + pending == 0:
-                self.plan = None
-            else:
-                self.plan = await self.hass.async_add_executor_job(
-                    partial(
-                        plan_chain,
-                        grid,
-                        wash.profile,
-                        dry.profile,
-                        loads,
-                        pending_dry=pending,
-                        washer_free_at=washer_free,
-                        dryer_free_at=dryer._busy_until(dry),
-                        pending_dry_ready_at=ready,
-                        allowed=market.allowed(grid, *self.window),
+            offset = 0
+            if washer_free is not None and washes:
+                # de was die nu draait is ronde 1: alleen zijn droogbeurt moet nog worden gepland
+                loose, washes, dries = loose + [dries[0]], washes[1:], dries[1:]
+                ready, offset = washer_free + 600, 1
+            plan, unplanned = None, 0
+            if dryer is not None and grid is not None and (washes or loose) and all(washes + dries + loose):
+                allowed = market.allowed(grid, *self.window)
+                dryer_free = dryer._busy_until((loose + dries)[0])
+                # past niet alles binnen de bekende prijzen, dan vervallen de laatste rondes uit het plan
+                for count in range(len(washes), -1, -1):
+                    if count + len(loose) == 0:
+                        break
+                    plan = await self.hass.async_add_executor_job(
+                        partial(
+                            plan_chain,
+                            grid,
+                            [p.profile for p in washes[:count]],
+                            [p.profile for p in loose + dries[:count]],
+                            count,
+                            pending_dry=len(loose),
+                            washer_free_at=washer_free,
+                            dryer_free_at=dryer_free,
+                            pending_dry_ready_at=ready,
+                            allowed=allowed,
+                        )
                     )
-                )
+                    if plan is not None:
+                        unplanned = len(washes) - count
+                        break
+                unplanned = unplanned if plan is not None else len(washes)
+            self.plan, self.plan_offset, self.unplanned = plan, offset, unplanned
+            self.plan_names = {
+                "wash": [p.name for p in washes if p],
+                "dry": [p.name for p in dries if p],
+                "loose": [p.name for p in loose if p],
+            }
         self.notify()
 
     def plan_steps(self) -> list[dict[str, Any]]:
         if self.plan is None:
             return []
         out = []
+        names, offset = self.plan_names, self.plan_offset
+        loose_total = len(names.get("loose", []))
+        loose_seen = 0
         for job in self.plan.as_list():
-            what = "Was" if job["kind"] == "wash" else "Drogen"
-            label = f"{what} {job['load']}" if job["load"] else "Drogen (ligt klaar)"
+            wash = job["kind"] == "wash"
+            what = "Was" if wash else "Drogen"
+            round_no: int | None = job["load"] + offset if job["load"] else None
+            if job["load"]:
+                program = (names.get("wash" if wash else "dry") or [])[job["load"] - 1 : job["load"]]
+            else:
+                program = names.get("loose", [])[loose_seen : loose_seen + 1]
+                loose_seen += 1
+                if offset and loose_seen == loose_total:
+                    round_no = 1  # de droogbeurt van de was die nu draait
+            label = f"{what} {round_no}" if round_no else "Drogen (ligt klaar)"
             out.append(
                 {
                     "stap": label,
+                    "soort": "was" if wash else "drogen",
+                    "ronde": round_no,
+                    "programma": program[0] if program else None,
                     "start": dt_util.utc_from_timestamp(job["start"]).isoformat(),
                     "eind": dt_util.utc_from_timestamp(job["end"]).isoformat(),
+                    "kosten": job["cost"],
                     "tekst": f"{label}: {fmt_time(job['start'])}–{fmt_time(job['end'])}",
                 }
             )
         return out
+
+    def plan_note(self) -> str | None:
+        """Waarom (een deel van) de wasdag niet is ingepland; None als alles in het plan staat."""
+        if self.loads + self.pending_dry == 0 or (self.plan is not None and not self.unplanned):
+            return None
+        if self.dryer is None:
+            return "Er is geen droger gekoppeld aan deze wasmachine"
+        if self.active_program is None or self.active_dry_program is None:
+            return "Er is nog geen was- of droogprogramma geleerd"
+        grid = get_market(self.hass).grid()
+        if grid is None:
+            return "Er zijn geen stroomprijzen bekend"
+        until = f"De stroomprijzen zijn bekend tot {fmt_time(grid.end)}"
+        if self.plan is None:
+            return f"{until}; daarvoor past de wasdag niet meer binnen je tijdvenster"
+        rest = "1 wasje past" if self.unplanned == 1 else f"{self.unplanned} wasjes passen"
+        return f"{until}; {rest} daar niet meer voor en staat nog niet in het plan"
 
     def plan_text(self) -> str:
         if self.loads + self.pending_dry == 0:
@@ -719,6 +865,13 @@ class ApplianceManager:
             return "Geen planning mogelijk"
         steps = self.plan_steps()
         return f"{steps[0]['stap']} starten om {fmt_time(self.plan.as_list()[0]['start'])}" if steps else "Geen planning mogelijk"
+
+    @property
+    def plan_saving(self) -> float | None:
+        """Wat het plan scheelt met alles zo vroeg mogelijk achter elkaar draaien."""
+        if self.plan is None or self.plan.cost_asap is None:
+            return None
+        return round(self.plan.cost_asap - self.plan.cost, 4)
 
     def summary(self) -> str | None:
         """Eén zin voor het dagadvies."""

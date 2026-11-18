@@ -352,6 +352,28 @@
         }
       }
     },
+    "set_round_program": {
+      "name": "Programma voor een wasronde kiezen",
+      "description": "Kies het was- en/of droogprogramma voor één ronde van de wasplanning. Een lege naam volgt weer het gekozen programma.",
+      "fields": {
+        "appliance": {
+          "name": "Wasmachine",
+          "description": "De wasmachine."
+        },
+        "round": {
+          "name": "Ronde",
+          "description": "Nummer van de ronde, geteld vanaf de eerstvolgende was."
+        },
+        "wash_program": {
+          "name": "Wasprogramma",
+          "description": "Naam van een geleerd wasprogramma; leeg volgt het programma voor advies."
+        },
+        "dry_program": {
+          "name": "Droogprogramma",
+          "description": "Naam van een geleerd programma van de gekoppelde droger; leeg volgt het gekozen droogprogramma."
+        }
+      }
+    },
     "delete_cycle": {
       "name": "Cyclus verwijderen",
       "description": "Verwijder een cyclus, bijvoorbeeld als dezelfde beurt twee keer is herkend. Historie inlezen haalt hem niet terug.",

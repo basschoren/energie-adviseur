@@ -54,6 +54,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def delete_program(call: ServiceCall) -> None:
         _manager(hass, call.data["appliance"], ApplianceManager).delete_program(call.data["program"])
 
+    async def set_round_program(call: ServiceCall) -> None:
+        manager = _manager(hass, call.data["appliance"], ApplianceManager)
+        if "wash_program" not in call.data and "dry_program" not in call.data:
+            raise HomeAssistantError("Geef een wasprogramma of een droogprogramma op")
+        manager.set_round_program(call.data["round"], call.data.get("wash_program"), call.data.get("dry_program"))
+
     async def delete_cycle(call: ServiceCall) -> None:
         _manager(hass, call.data["appliance"], ApplianceManager).delete_cycle(call.data["cycle_id"])
 
@@ -113,6 +119,19 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.services.async_register(
         DOMAIN, "delete_program", delete_program, vol.Schema({**appliance, vol.Required("program"): cv.string})
+    )
+    hass.services.async_register(
+        DOMAIN,
+        "set_round_program",
+        set_round_program,
+        vol.Schema(
+            {
+                **appliance,
+                vol.Required("round"): vol.All(vol.Coerce(int), vol.Range(min=1, max=6)),
+                vol.Optional("wash_program"): cv.string,
+                vol.Optional("dry_program"): cv.string,
+            }
+        ),
     )
     hass.services.async_register(
         DOMAIN, "delete_cycle", delete_cycle, vol.Schema({**appliance, vol.Required("cycle_id"): cv.string})

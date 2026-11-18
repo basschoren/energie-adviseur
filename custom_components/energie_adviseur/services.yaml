@@ -52,6 +52,26 @@ delete_program:
       required: true
       selector:
         text:
+set_round_program:
+  fields:
+    appliance:
+      required: true
+      selector:
+        config_entry:
+          integration: energie_adviseur
+    round:
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 6
+          mode: box
+    wash_program:
+      selector:
+        text:
+    dry_program:
+      selector:
+        text:
 delete_cycle:
   fields:
     appliance:
