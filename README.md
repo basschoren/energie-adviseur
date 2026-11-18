@@ -201,6 +201,23 @@ title: Energieadvies
 content: "{{ state_attr('sensor.energie_adviseur_dagadvies', 'advies') }}"
 ```
 
+### Kaart voor de wasdag en het advies
+
+In de map `dashboard` van deze repository staat `energie-adviseur-card.js`: een kaart met het aantal wasjes, het was- en droogprogramma per ronde, de planning als tijdlijn en per apparaat het programma en het beste startmoment. Zet het bestand in `config/www`, voeg `/local/energie-adviseur-card.js` toe als dashboardbron (JavaScript-module) en gebruik:
+
+```yaml
+type: custom:energie-adviseur-card
+laundry:
+  appliance: Wasmachine      # naam van de wasmachine in Energie Adviseur
+  prefix: wasmachine         # begin van de entiteiten, zoals number.wasmachine_aantal_wasjes_vandaag
+appliances:
+  - { name: Wasmachine, prefix: wasmachine, icon: mdi:washing-machine }
+  - { name: Droger, prefix: droger, icon: mdi:tumble-dryer, also_select: select.wasmachine_droogprogramma }
+  - { name: Vaatwasser, prefix: vaatwasser, icon: mdi:dishwasher }
+```
+
+De kaart leest alleen entiteiten en schrijft via acties, dus werkt ook voor gebruikers die geen beheerder zijn. Met `also_select` zet de droger zijn programma ook als standaard droogprogramma van de wasdag.
+
 ## Automatiseren
 
 Na elke cyclus vuurt de integratie de gebeurtenis `energie_adviseur_cycle_finished` af met `name`, `program`, `duration_min` en `energy_kwh`. Daarmee kun je bijvoorbeeld een melding op je telefoon sturen als de was klaar is.
