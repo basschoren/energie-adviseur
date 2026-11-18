@@ -283,8 +283,10 @@ class ApplianceManager:
         self._feed(time.time(), power)
         self._ticks += 1
         self.refresh_advice()
-        if self._ticks % 5 == 0:
-            if self.detector.running:
+        # zonder plan elke minuut opnieuw proberen: vlak na het opstarten is de droger nog niet geladen
+        waiting = self.is_washer and self.plan is None and self.loads + self.pending_dry > 0
+        if self._ticks % 5 == 0 or waiting:
+            if self.detector.running and self._ticks % 5 == 0:
                 self._save()
             self.hass.async_create_task(self.async_replan())
         self.notify()
