@@ -130,6 +130,7 @@ class ApplianceManager:
         self.plan_names: dict[str, list[str]] = {}  # programmanamen bij de beurten in het plan
         self.plan_offset = 0  # 1 als ronde 1 nu draait: het plan begint dan bij was 2
         self.unplanned = 0  # wasjes die niet meer binnen de bekende prijzen passen
+        self.drying_now = False  # de droger draait nu de eerste droogbeurt die klaarlag: die staat niet meer in het plan
         self.advice: Advice | None = None  # beste start over alle bekende prijzen
         self.advice_today: Advice | None = None  # beste start die vandaag begint
         self.advice_tomorrow: Advice | None = None  # beste start morgen; alleen als de prijzen van morgen bekend zijn
@@ -781,6 +782,18 @@ class ApplianceManager:
             ready = None
             offset = 0
             washed_at: list[float | None] = list(self.pending_dry_since)
+            # draait de droger en is hij gestart nadat de eerste was klaar was, dan is dat die droogbeurt:
+            # hij hoeft niet nog een keer te worden gepland
+            drying_now = bool(
+                loose
+                and dryer is not None
+                and dryer.detector.running
+                and dryer.detector.start is not None
+                and dryer.detector.start >= self.pending_dry_since[0] - 60
+            )
+            drying_program = loose[0] if drying_now else None
+            if drying_now:
+                loose, washed_at = loose[1:], washed_at[1:]
             if washer_free is not None and washes:
                 # de was die nu draait is ronde 1: alleen zijn droogbeurt moet nog worden gepland
                 loose, washes, dries = loose + [dries[0]], washes[1:], dries[1:]
@@ -789,7 +802,8 @@ class ApplianceManager:
             plan, unplanned = None, 0
             if dryer is not None and grid is not None and (washes or loose) and all(washes + dries + loose):
                 allowed = market.allowed(grid, *self.window)
-                dryer_free = dryer._busy_until((loose + dries)[0])
+                # de droger is bezet tot het programma dat nu draait klaar is
+                dryer_free = dryer._busy_until(drying_program or (loose + dries)[0])
                 # past niet alles binnen de bekende prijzen, dan vervallen de laatste rondes uit het plan
                 for count in range(len(washes), -1, -1):
                     if count + len(loose) == 0:
@@ -816,6 +830,7 @@ class ApplianceManager:
                         break
                 unplanned = unplanned if plan is not None else len(washes)
             self.plan, self.plan_offset, self.unplanned = plan, offset, unplanned
+            self.drying_now = drying_now
             self.plan_names = {
                 "wash": [p.name for p in washes if p],
                 "dry": [p.name for p in dries if p],
@@ -860,6 +875,8 @@ class ApplianceManager:
         """Waarom (een deel van) de wasdag niet is ingepland; None als alles in het plan staat."""
         if self.loads + self.pending_dry == 0 or (self.plan is not None and not self.unplanned):
             return None
+        if self._only_drying_now:
+            return None
         if self.dryer is None:
             return "Er is geen droger gekoppeld aan deze wasmachine"
         if self.active_program is None or self.active_dry_program is None:
@@ -876,10 +893,17 @@ class ApplianceManager:
     def plan_text(self) -> str:
         if self.loads + self.pending_dry == 0:
             return "Geen wasjes gepland"
+        if self._only_drying_now:
+            return "Droger draait de laatste droogbeurt"
         if self.plan is None:
             return "Geen planning mogelijk"
         steps = self.plan_steps()
         return f"{steps[0]['stap']} starten om {fmt_time(self.plan.as_list()[0]['start'])}" if steps else "Geen planning mogelijk"
+
+    @property
+    def _only_drying_now(self) -> bool:
+        """Is de droogbeurt die nu draait het enige dat nog over was? Dan valt er niets meer te plannen."""
+        return self.drying_now and self.plan is None and self.loads == 0 and self.pending_dry == 1
 
     @property
     def plan_saving(self) -> float | None:

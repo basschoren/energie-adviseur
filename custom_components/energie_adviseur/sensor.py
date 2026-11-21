@@ -158,6 +158,7 @@ APPLIANCE: tuple[EADescription, ...] = (
             "niet_ingepland": m.unplanned,
             "toelichting": m.plan_note(),
             "afwezig": get_market(m.hass).away_periods(),
+            "droger_draait_droogbeurt": m.drying_now,
             "wasprogrammas": m.program_names(),
             "droogprogrammas": m.dryer.program_names() if m.dryer else [],
         },
