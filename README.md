@@ -26,7 +26,7 @@ Voeg de integratie meerdere keren toe; elke keer maak je één onderdeel aan.
 
 | Volgorde | Onderdeel | Wat je invult |
 |---|---|---|
-| 1 | Algemene instellingen | Prijssensor, zonne-forecast, basisverbruik, aftrek op teruglevering, optioneel een lokale AI |
+| 1 | Algemene instellingen | Prijssensor, zonne-forecast, basisverbruik, aftrek op teruglevering, optioneel een lokale AI en agenda's voor aanwezigheid |
 | 2 | Droger | Vermogenssensor en drempels |
 | 3 | Wasmachine | Vermogenssensor, drempels en de gekoppelde droger |
 | 4 | Vaatwasser en overige apparaten | Vermogenssensor en drempels |
@@ -46,6 +46,12 @@ Meldt je apparaat zelf zijn toestand (bijvoorbeeld een vaatwasser met de statuss
 - **Minimaal actief voor start**: zo lang moet de status onafgebroken actief zijn voordat een cyclus begint. Springt de status eerder naar iets anders, zoals *Delayed Start* bij een uitgestelde start, dan begint er niets.
 
 Een cyclus eindigt zodra de status iets anders wordt dan actief of gepauzeerd. Meldt de sensor even niets (*unavailable* of *unknown*), dan blijft de laatste status gelden. Historie inlezen en *Opnieuw ophalen* gebruiken ook de historie van de statussensor.
+
+### Aanwezigheid uit je agenda
+
+Kies bij de algemene instellingen een of meer agenda's bij *Agenda's voor aanwezigheid*. Tijdens afspraken waarin je op **bezet** staat, ben je niet thuis: voor die tijd wordt geen start gepland, niet in de wasdag en niet in het advies per apparaat. Een afspraak die op **vrij** staat telt niet mee, en een afspraak die je hebt afgewezen ook niet. Een apparaat mag wel doordraaien terwijl je weg bent; het gaat om het moment van aanzetten.
+
+Bezet of vrij wordt gelezen uit Google Agenda. Bij andere agenda's (bijvoorbeeld een lokale agenda *Afwezig* die je zelf bijhoudt) telt elke afspraak als bezet. De agenda's worden elke 5 minuten gelezen, 3 dagen vooruit. Het attribuut `afwezig` van **Wasplanning** en **Dagadvies** laat zien welke perioden zijn gevonden.
 
 ### Aftrek op teruglevering
 Dit is hoeveel een teruggeleverde kWh minder oplevert dan een afgenomen kWh kost. Bij 0 maakt het voor de kosten niet uit of je eigen zonnestroom gebruikt, en telt de zonne-forecast dus niet mee. Vul hier het werkelijke verschil in zodra je voor teruglevering minder krijgt dan je voor afname betaalt.
@@ -148,7 +154,7 @@ Wasdag (bij de wasmachine):
   ```
 
   Een lege naam laat de ronde weer het gekozen programma volgen. Is een was klaar, dan schuiven de rondes op en ligt de droogbeurt van die ronde klaar met zijn eigen programma. Draait de wasmachine terwijl er nog wasjes op de teller staan, dan is dat ronde 1.
-- De planning rekent met de duur en het verbruik van het programma van elke ronde. De wasmachine draait door terwijl de droger bezig is; een droogbeurt begint minstens 10 minuten en hooguit 3 uur na de was van dezelfde ronde.
+- De planning rekent met de duur en het verbruik van het programma van elke ronde. De wasmachine draait door terwijl de droger bezig is; een droogbeurt begint minstens 10 minuten en hooguit 3 uur na de was van dezelfde ronde, en altijd op dezelfde dag als die was. Dat geldt ook voor een droogbeurt die klaarligt en voor de was die nu draait: is een later moment goedkoper voor de hele wasdag, dan schuift de droogbeurt hooguit 3 uur op, nooit naar morgen. Kan dat niet meer (buiten je tijdvenster, niet thuis of al langer dan 3 uur geleden gewassen), dan staat hij op het eerste moment dat wel kan.
 - Attributen van **Wasplanning**: `planning` (per stap ook `programma`, `ronde`, `soort` en `kosten`), `rondes`, `droogbeurten_die_klaarliggen`, `kosten`, `besparing` (ten opzichte van alles zo vroeg mogelijk achter elkaar draaien), `wasprogrammas` en `droogprogrammas`. Passen niet alle wasjes binnen de bekende prijzen, dan staan de laatste rondes niet in het plan: `niet_ingepland` telt ze en `toelichting` zegt tot wanneer de prijzen bekend zijn.
 - De teller loopt af wanneer een was klaar is. Een was die klaar is maar nog niet gedroogd, blijft in de planning staan.
 

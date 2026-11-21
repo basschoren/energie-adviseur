@@ -126,6 +126,7 @@ class ApplianceManager:
         self.wash_rounds: list[str | None] = []  # per wasje dat nog moet draaien
         self.dry_rounds: list[str | None] = []  # de droogbeurt bij elk van die wasjes
         self.pending_dry_programs: list[str | None] = []  # per droogbeurt die klaarligt
+        self.pending_dry_since: list[float] = []  # wanneer de was van elke droogbeurt die klaarligt klaar was
         self.plan_names: dict[str, list[str]] = {}  # programmanamen bij de beurten in het plan
         self.plan_offset = 0  # 1 als ronde 1 nu draait: het plan begint dan bij was 2
         self.unplanned = 0  # wasjes die niet meer binnen de bekende prijzen passen
@@ -183,6 +184,7 @@ class ApplianceManager:
         self.wash_rounds = list(stored.get("wash_rounds", []))
         self.dry_rounds = list(stored.get("dry_rounds", []))
         self.pending_dry_programs = list(stored.get("pending_dry_programs", []))
+        self.pending_dry_since = [float(t) for t in stored.get("pending_dry_since", [])]
         self._sync_rounds()
         # een lopende meting alleen hervatten als de manier van detecteren niet is gewijzigd
         if stored.get("detector") and stored.get("state_mode", False) == self.detector.config.state_mode:
@@ -230,6 +232,7 @@ class ApplianceManager:
             "wash_rounds": self.wash_rounds,
             "dry_rounds": self.dry_rounds,
             "pending_dry_programs": self.pending_dry_programs,
+            "pending_dry_since": self.pending_dry_since,
             "detector": self.detector.to_dict(),
             "state_mode": self.detector.config.state_mode,
         }
@@ -325,6 +328,7 @@ class ApplianceManager:
             self.pending_dry += 1
             self.wash_rounds.pop(0)
             self.pending_dry_programs.append(self.dry_rounds.pop(0))
+            self.pending_dry_since.append(cycle.end)
         self._save()
         self.hass.bus.async_fire(
             EVENT_CYCLE_FINISHED,
@@ -359,6 +363,7 @@ class ApplianceManager:
                 self._sync_rounds()
                 self.pending_dry -= 1
                 self.pending_dry_programs.pop(0)
+                self.pending_dry_since.pop(0)
                 self._save()
                 self.hass.async_create_task(self.async_replan())
 
@@ -626,6 +631,8 @@ class ApplianceManager:
         for name, count in (("wash_rounds", self.loads), ("dry_rounds", self.loads), ("pending_dry_programs", self.pending_dry)):
             rounds = getattr(self, name)
             setattr(self, name, (rounds + [None] * count)[:count])
+        # van een droogbeurt zonder bekende wastijd (opgeslagen door een oudere versie) telt de was als nu klaar
+        self.pending_dry_since = (self.pending_dry_since + [time.time()] * self.pending_dry)[: self.pending_dry]
 
     def _wash_program(self, program_id: str | None) -> Program | None:
         """Het wasprogramma van een ronde; zonder eigen keuze (of na verwijderen) het gekozen programma."""
@@ -765,6 +772,7 @@ class ApplianceManager:
             dryer = self.dryer
             market = get_market(self.hass)
             await market.async_refresh_solar()
+            await market.async_refresh_presence()
             grid = market.grid()
             washes = [self._wash_program(p) for p in self.wash_rounds]
             dries = [self._dry_program(p) for p in self.dry_rounds]
@@ -772,10 +780,12 @@ class ApplianceManager:
             washer_free = self._busy_until(washes[0] if washes else self.active_program)
             ready = None
             offset = 0
+            washed_at: list[float | None] = list(self.pending_dry_since)
             if washer_free is not None and washes:
                 # de was die nu draait is ronde 1: alleen zijn droogbeurt moet nog worden gepland
                 loose, washes, dries = loose + [dries[0]], washes[1:], dries[1:]
                 ready, offset = washer_free + 600, 1
+                washed_at.append(washer_free)
             plan, unplanned = None, 0
             if dryer is not None and grid is not None and (washes or loose) and all(washes + dries + loose):
                 allowed = market.allowed(grid, *self.window)
@@ -796,6 +806,9 @@ class ApplianceManager:
                             dryer_free_at=dryer_free,
                             pending_dry_ready_at=ready,
                             allowed=allowed,
+                            # drogen hoort bij de was: op dezelfde dag en hooguit 3 uur erna
+                            pending_dry_washed_at=washed_at,
+                            day_ends=[market.day_bounds(day)[1] for day in range(-1, 3)],
                         )
                     )
                     if plan is not None:

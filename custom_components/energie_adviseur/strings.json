@@ -18,7 +18,8 @@
           "base_load_w": "Base load of the house",
           "export_deduction": "Export deduction",
           "ai_entity": "Local AI (optional)",
-          "advice_time": "Time of the daily advice"
+          "advice_time": "Time of the daily advice",
+          "presence_calendars": "Calendars for presence (optional)"
         },
         "data_description": {
           "price_entity": "A sensor whose attributes hold the hourly or quarter-hourly prices for today and tomorrow (Tibber, Frank Energie, Zonneplan, Nordpool, ENTSO-e).",
@@ -26,7 +27,8 @@
           "solar_entity": "Only needed when the Energy dashboard has no forecast, e.g. a Solcast sensor with a detailed forecast attribute.",
           "base_load_w": "Solar production above this level counts as surplus.",
           "export_deduction": "How much less a returned kWh yields than a purchased kWh costs. At 0, solar power does not influence the advice.",
-          "ai_entity": "An AI Task or conversation entity (e.g. Ollama) that rewrites the daily advice. The calculations do not depend on it."
+          "ai_entity": "An AI Task or conversation entity (e.g. Ollama) that rewrites the daily advice. The calculations do not depend on it.",
+          "presence_calendars": "During events in these calendars where you are shown as busy, you are not at home: no start is planned then. Events marked as free do not count (busy/free is read from Google Calendar; for other calendars every event counts as busy)."
         }
       },
       "appliance": {
@@ -102,7 +104,8 @@
           "base_load_w": "Base load of the house",
           "export_deduction": "Export deduction",
           "ai_entity": "Local AI (optional)",
-          "advice_time": "Time of the daily advice"
+          "advice_time": "Time of the daily advice",
+          "presence_calendars": "Calendars for presence (optional)"
         },
         "data_description": {
           "price_entity": "A sensor whose attributes hold the hourly or quarter-hourly prices for today and tomorrow (Tibber, Frank Energie, Zonneplan, Nordpool, ENTSO-e).",
@@ -110,7 +113,8 @@
           "solar_entity": "Only needed when the Energy dashboard has no forecast, e.g. a Solcast sensor with a detailed forecast attribute.",
           "base_load_w": "Solar production above this level counts as surplus.",
           "export_deduction": "How much less a returned kWh yields than a purchased kWh costs. At 0, solar power does not influence the advice.",
-          "ai_entity": "An AI Task or conversation entity (e.g. Ollama) that rewrites the daily advice. The calculations do not depend on it."
+          "ai_entity": "An AI Task or conversation entity (e.g. Ollama) that rewrites the daily advice. The calculations do not depend on it.",
+          "presence_calendars": "During events in these calendars where you are shown as busy, you are not at home: no start is planned then. Events marked as free do not count (busy/free is read from Google Calendar; for other calendars every event counts as busy)."
         }
       },
       "appliance": {

@@ -34,6 +34,7 @@ from .const import (
     CONF_NAME,
     CONF_OUTDOOR_ENTITY,
     CONF_POWER_ENTITY,
+    CONF_PRESENCE_CALENDARS,
     CONF_PRICE_ENTITY,
     CONF_PRICE_MULTIPLIER,
     CONF_SOLAR_ENTITY,
@@ -84,6 +85,8 @@ def hub_schema() -> vol.Schema:
             vol.Required(CONF_EXPORT_DEDUCTION, default=0.0): _num(0, 1, 0.001, "€/kWh"),
             vol.Optional(CONF_AI_ENTITY): _entity(["ai_task", "conversation"]),
             vol.Required(CONF_ADVICE_TIME, default="07:00:00"): sel.TimeSelector(),
+            # optioneel: tijdens afspraken waarin je bezet bent, ben je niet thuis om iets aan te zetten
+            vol.Optional(CONF_PRESENCE_CALENDARS): _entity("calendar", multiple=True),
         }
     )
 

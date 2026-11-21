@@ -19,6 +19,7 @@ from core.cycle_detector import (  # noqa: E402
     trim_cycle,
 )
 from core.heating_model import DayRecord, cop_at, fit, hourly_advice, implied_cop  # noqa: E402
+from core.presence import is_away, merge  # noqa: E402
 from core.price import parse_intervals, price_scale  # noqa: E402
 from core.program_matcher import Program, match, rebuild  # noqa: E402
 from core.scheduler import best_start, build_grid, day_mask, plan_chain  # noqa: E402
@@ -331,6 +332,92 @@ class ChainTest(unittest.TestCase):
         plan = plan_chain(build_grid(T0, hourly([0.2] * 12)), self.WASH, self.DRY, 2)
         starts = [j["start"] for j in plan.as_list()]
         self.assertEqual(starts, sorted(starts))
+
+    # ---- drogen hoort bij de was: op dezelfde dag en hooguit 3 uur erna
+
+    def test_loose_dry_run_does_not_wait_for_cheaper_prices_tomorrow(self):
+        # de was is net klaar; over 10 uur is stroom bijna gratis, maar zo lang mag de was niet blijven liggen
+        grid = build_grid(T0, hourly([0.30] * 10 + [0.01] * 14))
+        plan = plan_chain(grid, [], [self.DRY], 0, pending_dry=1, pending_dry_washed_at=[T0 - 600])
+        (loose,) = plan.jobs
+        self.assertLessEqual(grid.time(loose.start), T0 - 600 + 3 * 3600)
+        # zonder die grens zou de droogbeurt naar de goedkope uren schuiven
+        free = plan_chain(grid, [], [self.DRY], 0, pending_dry=1)
+        self.assertGreaterEqual(free.jobs[0].start, 10 * 12)
+
+    def test_loose_dry_run_may_wait_up_to_three_hours_when_cheaper(self):
+        grid = build_grid(T0, hourly([0.30, 0.30, 0.05, 0.05, 0.05, 0.05, 0.30, 0.30]))
+        plan = plan_chain(grid, [], [self.DRY], 0, pending_dry=1, pending_dry_washed_at=[T0])
+        self.assertEqual(plan.jobs[0].start, 2 * 12)  # 2 uur wachten: precies de goedkope uren
+        # is het pas na 4 uur goedkoop, dan stopt het uitstel bij 3 uur
+        grid = build_grid(T0, hourly([0.30] * 4 + [0.05] * 4))
+        plan = plan_chain(grid, [], [self.DRY], 0, pending_dry=1, pending_dry_washed_at=[T0])
+        self.assertEqual(plan.jobs[0].start, 3 * 12)
+
+    def test_loose_dry_run_stays_on_the_day_of_the_wash(self):
+        # was klaar om 22:00, middernacht om 00:00 (2 uur later): 3 uur wachten zou over middernacht gaan
+        grid = build_grid(T0, hourly([0.30] * 2 + [0.01] * 6))
+        plan = plan_chain(
+            grid, [], [self.DRY], 0, pending_dry=1, pending_dry_washed_at=[T0], day_ends=[T0 + 2 * 3600]
+        )
+        self.assertLess(grid.time(plan.jobs[0].start), T0 + 2 * 3600)
+
+    def test_loose_dry_run_starts_as_soon_as_possible_when_the_window_has_passed(self):
+        grid = build_grid(T0, hourly([0.30] * 10 + [0.01] * 14))
+        # de was is al 5 uur klaar
+        plan = plan_chain(grid, [], [self.DRY], 0, pending_dry=1, pending_dry_washed_at=[T0 - 5 * 3600])
+        self.assertEqual(plan.jobs[0].start, 0)
+        # of je mag de eerste 4 uur niet starten (niet thuis): dan direct daarna, niet pas in de goedkope uren
+        allowed = [i >= 48 for i in range(len(grid))]
+        plan = plan_chain(grid, [], [self.DRY], 0, pending_dry=1, pending_dry_washed_at=[T0], allowed=allowed)
+        self.assertEqual(plan.jobs[0].start, 48)
+
+    def test_dry_run_of_running_wash_follows_within_three_hours(self):
+        # de was draait nog een uur; daarna wordt het pas na 6 uur goedkoop
+        grid = build_grid(T0, hourly([0.30] * 7 + [0.01] * 17))
+        plan = plan_chain(
+            grid, [], [self.DRY], 0, pending_dry=1,
+            washer_free_at=T0 + 3600, pending_dry_ready_at=T0 + 4200, pending_dry_washed_at=[T0 + 3600],
+        )
+        start = grid.time(plan.jobs[0].start)
+        self.assertGreaterEqual(start, T0 + 4200)
+        self.assertLessEqual(start, T0 + 3600 + 3 * 3600)
+
+    def test_planned_rounds_dry_on_the_day_of_their_wash(self):
+        # zonder de regel wast het plan in de goedkope uren en droogt het daarna; leg middernacht
+        # precies op de start van die droogbeurt, dan valt hij een dag later dan zijn was
+        grid = build_grid(T0, hourly([0.30] * 4 + [0.02] * 4 + [0.30] * 16))
+        free = plan_chain(grid, self.WASH, self.DRY, 1)
+        wash, dry = free.jobs
+        midnight = grid.time(dry.start)
+        self.assertLess(grid.time(wash.end), midnight)
+        for loads in (1, 2):
+            plan = plan_chain(grid, self.WASH, self.DRY, loads, day_ends=[midnight, midnight + 86400])
+            self.check(plan, loads)
+            for wash in (j for j in plan.jobs if j.kind == "wash"):
+                dry = next(j for j in plan.jobs if j.kind == "dry" and j.load == wash.load)
+                same_day = (grid.time(wash.end) < midnight) == (grid.time(dry.start) < midnight)
+                self.assertTrue(same_day, (grid.time(wash.end) - T0, grid.time(dry.start) - T0))
+
+    def test_total_cost_decides_with_several_rounds(self):
+        # losse droogbeurt plus een hele ronde: alles blijft binnen de regels en kost niet meer dan direct starten
+        grid = build_grid(T0, hourly([0.30, 0.10, 0.05, 0.25, 0.30, 0.08, 0.06, 0.30, 0.30, 0.30, 0.30, 0.30]))
+        plan = plan_chain(grid, self.WASH, self.DRY, 1, pending_dry=1, pending_dry_washed_at=[T0])
+        self.check(plan, 1, pending=1)
+        loose = next(j for j in plan.jobs if j.load == 0)
+        self.assertLessEqual(loose.start, 36)
+        self.assertLessEqual(plan.cost, plan.cost_asap + 1e-6)
+
+
+class PresenceTest(unittest.TestCase):
+    def test_merge_and_is_away(self):
+        away = merge([(50.0, 60.0), (10.0, 20.0), (15.0, 30.0), (30.0, 35.0), (70.0, 70.0)])
+        self.assertEqual(away, [(10.0, 35.0), (50.0, 60.0)])
+        self.assertTrue(is_away(away, 10.0))
+        self.assertTrue(is_away(away, 34.9))
+        self.assertFalse(is_away(away, 35.0))  # het einde zelf telt als weer thuis
+        self.assertFalse(is_away(away, 40.0))
+        self.assertFalse(is_away([], 40.0))
 
 
 class HeatingTest(unittest.TestCase):

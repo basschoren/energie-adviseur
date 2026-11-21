@@ -18,7 +18,8 @@
           "base_load_w": "Basisverbruik van het huis",
           "export_deduction": "Aftrek op teruglevering",
           "ai_entity": "Lokale AI (optioneel)",
-          "advice_time": "Tijdstip van het dagadvies"
+          "advice_time": "Tijdstip van het dagadvies",
+          "presence_calendars": "Agenda's voor aanwezigheid (optioneel)"
         },
         "data_description": {
           "price_entity": "Een sensor die in zijn attributen de uur- of kwartierprijzen van vandaag en morgen heeft (Tibber, Frank Energie, Zonneplan, Nordpool, ENTSO-e).",
@@ -26,7 +27,8 @@
           "solar_entity": "Alleen nodig als het Energie-dashboard geen forecast heeft, bijvoorbeeld een Solcast-sensor met een gedetailleerde forecast als attribuut.",
           "base_load_w": "Opwek boven dit verbruik telt als overschot.",
           "export_deduction": "Hoeveel een teruggeleverde kWh minder opbrengt dan een afgenomen kWh kost. Bij 0 heeft zonnestroom geen invloed op het advies.",
-          "ai_entity": "Een AI Task- of gespreksentiteit (bijv. Ollama) die het dagadvies verwoordt. De berekeningen hangen er niet van af."
+          "ai_entity": "Een AI Task- of gespreksentiteit (bijv. Ollama) die het dagadvies verwoordt. De berekeningen hangen er niet van af.",
+          "presence_calendars": "Tijdens afspraken in deze agenda's waarin je op 'bezet' staat, ben je niet thuis: dan wordt er geen start gepland. Afspraken die op 'vrij' staan tellen niet mee (bezet/vrij wordt gelezen uit Google Agenda; bij andere agenda's telt elke afspraak als bezet)."
         }
       },
       "appliance": {
@@ -102,7 +104,8 @@
           "base_load_w": "Basisverbruik van het huis",
           "export_deduction": "Aftrek op teruglevering",
           "ai_entity": "Lokale AI (optioneel)",
-          "advice_time": "Tijdstip van het dagadvies"
+          "advice_time": "Tijdstip van het dagadvies",
+          "presence_calendars": "Agenda's voor aanwezigheid (optioneel)"
         },
         "data_description": {
           "price_entity": "Een sensor die in zijn attributen de uur- of kwartierprijzen van vandaag en morgen heeft (Tibber, Frank Energie, Zonneplan, Nordpool, ENTSO-e).",
@@ -110,7 +113,8 @@
           "solar_entity": "Alleen nodig als het Energie-dashboard geen forecast heeft, bijvoorbeeld een Solcast-sensor met een gedetailleerde forecast als attribuut.",
           "base_load_w": "Opwek boven dit verbruik telt als overschot.",
           "export_deduction": "Hoeveel een teruggeleverde kWh minder opbrengt dan een afgenomen kWh kost. Bij 0 heeft zonnestroom geen invloed op het advies.",
-          "ai_entity": "Een AI Task- of gespreksentiteit (bijv. Ollama) die het dagadvies verwoordt. De berekeningen hangen er niet van af."
+          "ai_entity": "Een AI Task- of gespreksentiteit (bijv. Ollama) die het dagadvies verwoordt. De berekeningen hangen er niet van af.",
+          "presence_calendars": "Tijdens afspraken in deze agenda's waarin je op 'bezet' staat, ben je niet thuis: dan wordt er geen start gepland. Afspraken die op 'vrij' staan tellen niet mee (bezet/vrij wordt gelezen uit Google Agenda; bij andere agenda's telt elke afspraak als bezet)."
         }
       },
       "appliance": {

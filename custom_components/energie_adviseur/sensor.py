@@ -157,6 +157,7 @@ APPLIANCE: tuple[EADescription, ...] = (
             "droogbeurten_die_klaarliggen": m.pending_dry_names(),
             "niet_ingepland": m.unplanned,
             "toelichting": m.plan_note(),
+            "afwezig": get_market(m.hass).away_periods(),
             "wasprogrammas": m.program_names(),
             "droogprogrammas": m.dryer.program_names() if m.dryer else [],
         },
@@ -221,7 +222,12 @@ HUB: tuple[EADescription, ...] = (
         key="daily_advice",
         device_class=SensorDeviceClass.TIMESTAMP,
         value=lambda m: m.generated,
-        attrs=lambda m: {"advies": m.advice, "bron": m.advice_source, "feiten": m.facts},
+        attrs=lambda m: {
+            "advies": m.advice,
+            "bron": m.advice_source,
+            "feiten": m.facts,
+            "afwezig": get_market(m.hass).away_periods(),
+        },
     ),
     EADescription(
         key="current_price",

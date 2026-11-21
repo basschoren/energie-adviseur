@@ -16,6 +16,7 @@ CONF_BASE_LOAD = "base_load_w"
 CONF_EXPORT_DEDUCTION = "export_deduction"
 CONF_AI_ENTITY = "ai_entity"
 CONF_ADVICE_TIME = "advice_time"
+CONF_PRESENCE_CALENDARS = "presence_calendars"
 
 # apparaat
 CONF_NAME = "name"

@@ -55,6 +55,7 @@ class HubManager:
             async_track_time_interval(self.hass, self._on_refresh, timedelta(minutes=15)),
         ]
         self.hass.async_create_task(get_market(self.hass).async_refresh_solar(force=True))
+        self.hass.async_create_task(get_market(self.hass).async_refresh_presence(force=True))
 
     async def async_stop(self) -> None:
         for unsub in self._unsub:
@@ -68,6 +69,7 @@ class HubManager:
     def _on_refresh(self, now: datetime) -> None:
         market = get_market(self.hass)
         self.hass.async_create_task(market.async_refresh_solar())
+        self.hass.async_create_task(market.async_refresh_presence())
         today = dt_util.now().date()
         if self._tomorrow_for != today and market.tomorrow_known():
             # de prijzen van morgen zijn binnen: dagadvies opnieuw, nu met vandaag én morgen
@@ -107,6 +109,7 @@ class HubManager:
         async with self._lock:
             market = get_market(self.hass)
             await market.async_refresh_solar()
+            await market.async_refresh_presence()
             if market.tomorrow_known():
                 self._tomorrow_for = dt_util.now().date()
             self.facts = self.collect_facts()

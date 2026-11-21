@@ -146,6 +146,8 @@ class Job:
     earliest: int = 0
     start: int = -1
     cost: float = 0.0  # meerkosten van deze beurt in het plan
+    latest: int | None = None  # uiterste start (losse droogbeurt: 3 uur na de was, op dezelfde dag)
+    fixed: bool = False  # het venster is niet meer haalbaar: zo vroeg mogelijk en niet meer schuiven
 
     @property
     def end(self) -> int:
@@ -193,11 +195,18 @@ def plan_chain(
     allowed: list[bool] | None = None,
     gap_s: float = 600.0,
     max_wait_s: float = 3 * 3600.0,
+    pending_dry_washed_at: list[float | None] | None = None,
+    day_ends: list[float] | None = None,
 ) -> ChainPlan | None:
     """Plan `loads` wasjes met elk een droogbeurt, plus `pending_dry` losse droogbeurten.
 
     Regels: elke machine één lading tegelijk; drogen begint minstens gap_s na
-    het einde van de was en hooguit max_wait_s daarna.
+    het einde van de was en hooguit max_wait_s daarna, en met `day_ends` (de
+    middernachten, epoch) ook op dezelfde dag als waarop de was klaar is.
+
+    `pending_dry_washed_at` geeft per losse droogbeurt wanneer zijn was klaar was
+    (of klaar zal zijn): dan geldt voor die droogbeurt dezelfde grens. Is dat
+    venster al voorbij of niet toegestaan, dan start hij zo vroeg mogelijk.
 
     `wash_profile` en `dry_profile` zijn één profiel voor alle beurten, of een lijst
     met een profiel per beurt: per wasje, en voor de droger eerst de losse
@@ -223,6 +232,26 @@ def plan_chain(
     dry_order = dries_loose + dries
     jobs = washes + dry_order
 
+    midnights = sorted(day_ends or [])
+    # middernachten als blokindex; alleen die binnen het raster doen ertoe
+    mid_idx = sorted({int(round((m - grid.t0) / SLOT_S)) for m in midnights if m > grid.t0})
+    for job, washed in zip(dries_loose, pending_dry_washed_at or []):
+        if washed is None:
+            continue
+        limit = washed + max_wait_s
+        midnight = next((m for m in midnights if m > washed), None)
+        if midnight is not None:
+            limit = min(limit, midnight - SLOT_S)
+        job.latest = int((limit - grid.t0) // SLOT_S)  # negatief: het venster is al voorbij
+
+    def day_hi(end: int) -> int:
+        """Laatste blok op dezelfde dag als een was die bij blok `end` klaar is."""
+        return next((m - 1 for m in mid_idx if m > end), size)
+
+    def day_lo(start: int) -> int:
+        """Begin van de dag waarin blok `start` valt."""
+        return max((m for m in mid_idx if m <= start), default=0)
+
     def ok(idx: int) -> bool:
         return allowed is None or (idx < len(allowed) and allowed[idx])
 
@@ -236,9 +265,13 @@ def plan_chain(
             if i + 1 < len(washes):
                 hi = min(hi, washes[i + 1].start - gap - len(job.profile))
             partner = dries[i]
-            lo = max(lo, partner.start - max_wait - len(job.profile))
+            lo = max(lo, partner.start - max_wait - len(job.profile), day_lo(partner.start) - len(job.profile))
             hi = min(hi, partner.start - gap - len(job.profile))
         else:
+            if job.fixed:
+                return job.start, job.start
+            if job.latest is not None:
+                hi = min(hi, job.latest)
             i = dry_order.index(job)
             if i > 0:
                 lo = max(lo, dry_order[i - 1].end)
@@ -247,7 +280,7 @@ def plan_chain(
             if job.load:
                 partner = washes[job.load - 1]
                 lo = max(lo, partner.end + gap)
-                hi = min(hi, partner.end + max_wait)
+                hi = min(hi, partner.end + max_wait, day_hi(partner.end))
         return lo, hi
 
     def first_allowed(lo: int, hi: int) -> int | None:
@@ -255,9 +288,18 @@ def plan_chain(
 
     def compact(origin: int) -> bool:
         """Zet alles zo vroeg mogelijk neer vanaf origin."""
-        w_next, d_next = max(w_free, origin), max(d_free, origin)
+        w_next, d_next = max(w_free, origin), d_free
         for job in dries_loose:
-            s = first_allowed(max(job.earliest, d_next), size - len(job.profile))
+            top = size - len(job.profile)
+            job.fixed = False
+            if job.latest is None:
+                s = first_allowed(max(job.earliest, d_next, origin), top)
+            else:
+                # gebonden aan zijn was: schuift niet mee met het startpunt
+                lo = max(job.earliest, d_next)
+                s = first_allowed(lo, min(top, job.latest))
+                if s is None:
+                    s, job.fixed = first_allowed(lo, top), True
             if s is None:
                 return False
             job.start, d_next = s, s + len(job.profile)
@@ -266,7 +308,7 @@ def plan_chain(
             while s is not None:
                 wash.start = s
                 d_lo = max(wash.end + gap, d_next)
-                d = first_allowed(d_lo, min(wash.end + max_wait, size - len(dry.profile)))
+                d = first_allowed(d_lo, min(wash.end + max_wait, day_hi(wash.end), size - len(dry.profile)))
                 if d is not None:
                     break
                 # droger te lang bezet of buiten venster: was later starten
