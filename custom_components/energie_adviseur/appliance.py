@@ -632,8 +632,30 @@ class ApplianceManager:
         for name, count in (("wash_rounds", self.loads), ("dry_rounds", self.loads), ("pending_dry_programs", self.pending_dry)):
             rounds = getattr(self, name)
             setattr(self, name, (rounds + [None] * count)[:count])
-        # van een droogbeurt zonder bekende wastijd (opgeslagen door een oudere versie) telt de was als nu klaar
-        self.pending_dry_since = (self.pending_dry_since + [time.time()] * self.pending_dry)[: self.pending_dry]
+        self.pending_dry_since = self._repair_washed_at()
+
+    def _repair_washed_at(self) -> list[float]:
+        """Wanneer de was van elke droogbeurt die klaarligt klaar was.
+
+        Een oudere versie hield dat niet bij en vulde het moment van bijwerken in. Een was kan
+        niet later klaar zijn dan de laatste wascyclus: zo'n waarde komt dan uit de laatste
+        wascycli (de droogbeurten die klaarliggen horen bij de laatste wasjes). Zonder cycli
+        telt de was als nu klaar.
+        """
+        count = self.pending_dry
+        if not count:
+            return []
+        known = self.pending_dry_since[:count]
+        ends = [c.end for c in self.cycles[-count:]] if self.is_washer else []
+        derived = [None] * (count - len(ends)) + ends
+        latest = max(ends, default=None)
+        out = []
+        for i in range(count):
+            value = known[i] if i < len(known) else None
+            if value is None or (latest is not None and value > latest + 60):
+                value = derived[i]
+            out.append(value if value is not None else time.time())
+        return out
 
     def _wash_program(self, program_id: str | None) -> Program | None:
         """Het wasprogramma van een ronde; zonder eigen keuze (of na verwijderen) het gekozen programma."""
