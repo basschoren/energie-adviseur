@@ -26,6 +26,9 @@ const TEXT = {
     unknown: "Zonder naam",
     name: "Programma",
     namePlaceholder: "Naam, bijv. Katoen 40",
+    choose: "Kies een programma…",
+    newProgram: "Nieuw programma…",
+    newProgramName: "Naam nieuw programma",
     save: "Opslaan",
     saved: (name) => `Opgeslagen als ${name}.`,
     chartHint: "Klik in de grafiek op het moment waar je wilt splitsen.",
@@ -119,6 +122,9 @@ const TEXT = {
     unknown: "Unnamed",
     name: "Programme",
     namePlaceholder: "Name, e.g. Cotton 40",
+    choose: "Choose a programme…",
+    newProgram: "New programme…",
+    newProgramName: "New programme name",
     save: "Save",
     saved: (name) => `Saved as ${name}.`,
     chartHint: "Click the chart at the moment where you want to split.",
@@ -245,7 +251,7 @@ const STYLE = `
     border: 1px solid var(--ea-line); background: transparent;
   }
   button:hover:not(:disabled) { background: color-mix(in srgb, var(--ea-accent) 10%, transparent); }
-  button:focus-visible, input:focus-visible, svg:focus-visible { outline: 2px solid var(--ea-accent); outline-offset: 2px; }
+  button:focus-visible, input:focus-visible, select:focus-visible, svg:focus-visible { outline: 2px solid var(--ea-accent); outline-offset: 2px; }
   button:disabled { opacity: 0.5; cursor: default; }
   button.primary { background: var(--ea-accent); border-color: var(--ea-accent); color: var(--text-primary-color, #fff); }
   button.primary:hover:not(:disabled) { background: var(--ea-accent); filter: brightness(1.08); }
@@ -258,10 +264,11 @@ const STYLE = `
   button.tab[aria-selected="true"], button.chip[aria-pressed="true"], button.program[aria-expanded="true"], button.toggle[aria-expanded="true"] {
     background: color-mix(in srgb, var(--ea-accent) 16%, transparent); border-color: var(--ea-accent); color: var(--ea-accent); font-weight: 500;
   }
-  input[type="text"], input[type="number"] {
+  input[type="text"], input[type="number"], select {
     min-height: 40px; padding: 0 12px; border-radius: 8px;
     border: 1px solid var(--ea-line); background: var(--ea-card); min-width: 0;
   }
+  select { cursor: pointer; }
   input[type="number"] { width: 84px; }
   label { color: var(--ea-muted); font-size: 12px; display: flex; flex-direction: column; gap: 4px; }
   .card { background: var(--ea-card); border: 1px solid var(--ea-line); border-radius: var(--ea-radius); padding: 16px; margin-bottom: 16px; }
@@ -335,6 +342,9 @@ class EnergieAdviseurPanel extends HTMLElement {
     this._editValue = undefined; // getypte nieuwe naam voor dat programma
     this._programConfirm = null; // "delete" | "merge": waarvoor om bevestiging wordt gevraagd
     this._runningNames = {}; // "entry_id:start" -> getypte naam voor de cyclus die nu loopt
+    // cycli (cycle_id, of "running:" + sleutel van de lopende cyclus) waarvoor 'Nieuw programma…' is gekozen
+    this._custom = new Set();
+    this._dirty = false; // er moest opnieuw getekend worden terwijl een keuzelijst open stond
     this._days = 10;
     this._busy = false;
     this._status = null; // { text, error }
@@ -603,15 +613,27 @@ class EnergieAdviseurPanel extends HTMLElement {
     main.addEventListener("keydown", (event) => this._onKey(event));
     main.addEventListener("pointermove", (event) => this._onHover(event));
     main.addEventListener("pointerleave", (event) => this._onHover(event), true);
+    // uitgesteld tekenen inhalen zodra de keuzelijst dicht is; gaat de focus naar een knop,
+    // dan tekent de klik daarop zelf, en nu tekenen zou die klik laten wegvallen
+    main.addEventListener("focusout", (event) => {
+      if (event.target.tagName !== "SELECT" || event.relatedTarget?.closest?.("button")) return;
+      setTimeout(() => this._dirty && this._render(), 0);
+    });
     this._render();
   }
 
   _render() {
     if (!this._built) return;
+    const active = this.shadowRoot.activeElement;
+    // niet opnieuw tekenen terwijl een keuzelijst open staat: die zou dichtklappen
+    if (active && active.tagName === "SELECT") {
+      this._dirty = true;
+      return;
+    }
+    this._dirty = false;
     const t = this._t;
     this.shadowRoot.querySelector("h1").textContent = t.title;
     const main = this.shadowRoot.querySelector("main");
-    const active = this.shadowRoot.activeElement;
     const focus = active && active.dataset ? { key: active.dataset.focus, start: active.selectionStart } : null;
 
     if (this._error) {
@@ -674,7 +696,6 @@ class EnergieAdviseurPanel extends HTMLElement {
         <button class="chip" aria-pressed="${filter === "unknown"}" data-action="filter" data-id="unknown">${esc(t.filterUnknown(unknown.length))}</button>
         <button class="chip" aria-pressed="${filter === "all"}" data-action="filter" data-id="all">${esc(t.filterAll(appliance.cycles.length))}</button>
       </div>
-      <datalist id="ea-programs">${appliance.programs.map((p) => `<option value="${esc(p.name)}"></option>`).join("")}</datalist>
       ${shown.length ? shown.map((c) => this._cycleCard(c)).join("") : `<div class="card muted">${esc(empty)}</div>`}`;
 
     if (focus && focus.key) {
@@ -691,7 +712,8 @@ class EnergieAdviseurPanel extends HTMLElement {
     const current = appliance.current;
     if (!current) return "";
     const t = this._t;
-    const typed = this._runningNames[this._runningKey(appliance)];
+    const key = this._runningKey(appliance);
+    const typed = this._runningNames[key];
     const value = typed !== undefined ? typed : current.program || "";
     const canSave = value.trim() !== "" && value.trim() !== (current.program || "") && !this._busy;
     const since = `${this._day(current.start)} ${this._clock(current.start)}`;
@@ -703,15 +725,69 @@ class EnergieAdviseurPanel extends HTMLElement {
           <span class="badge ${current.program ? "named" : ""}">${esc(current.program || t.unknown)}</span>
         </div>
         <div class="row">
-          <label class="grow">${esc(t.name)}
-            <input type="text" list="ea-programs" maxlength="60" autocomplete="off" placeholder="${esc(t.namePlaceholder)}"
-              value="${esc(value)}" data-field="running-name" data-focus="running-name">
-          </label>
+          ${this._programField(appliance, value, { field: "running-name", focus: "running-name", custom: this._custom.has(`running:${key}`) })}
           <button class="primary" data-action="running-save" ${canSave ? "" : "disabled"}>${esc(t.save)}</button>
           ${current.program ? `<button data-action="running-clear" ${this._busy ? "disabled" : ""}>${esc(t.runningClear)}</button>` : ""}
         </div>
         <p class="muted hint">${esc(t.runningHint)}</p>
       </section>`;
+  }
+
+  /**
+   * Programma kiezen: een gewone keuzelijst met de geleerde programma's en 'Nieuw programma…',
+   * dat een tekstveld voor een nieuwe naam toont. Geen datalist: in de Android-app verschijnen
+   * die suggesties pas tijdens het typen en klappen ze dicht zodra het toetsenbord opent.
+   * Zonder geleerde programma's is er alleen het tekstveld.
+   */
+  _programField(appliance, value, { field, focus, custom }) {
+    const t = this._t;
+    const programs = appliance.programs;
+    const wanted = value.trim().toLocaleLowerCase();
+    const match = wanted ? programs.find((p) => p.name.toLocaleLowerCase() === wanted) : null;
+    const typing = !programs.length || custom || (wanted !== "" && !match);
+    const input = (label) => `<label class="grow">${esc(label)}
+        <input type="text" maxlength="60" autocomplete="off" placeholder="${esc(t.namePlaceholder)}"
+          value="${esc(value)}" data-field="${field}" data-focus="${esc(focus)}">
+      </label>`;
+    if (!programs.length) return input(t.name);
+    const option = (text, attrs) => `<option ${attrs}>${esc(text)}</option>`;
+    const options = [
+      option(t.choose, `value="" disabled ${!typing && !match ? "selected" : ""}`),
+      ...programs.map((p) => option(p.name, `value="${esc(p.name)}" ${!typing && match === p ? "selected" : ""}`)),
+      option(t.newProgram, `value="" data-kind="new" ${typing ? "selected" : ""}`),
+    ];
+    return `<label class="grow">${esc(t.name)}
+        <select data-field="${field}-pick" data-focus="${esc(focus)}-pick">${options.join("")}</select>
+      </label>
+      ${typing ? input(t.newProgramName) : ""}`;
+  }
+
+  /** Een keuze uit de lijst: een geleerd programma, of 'Nieuw programma…' om zelf een naam te typen. */
+  _onPick(select) {
+    const isNew = select.options[select.selectedIndex]?.dataset.kind === "new";
+    const name = isNew ? "" : select.value;
+    let key;
+    let focus;
+    if (select.dataset.field === "running-name-pick") {
+      const appliance = this._appliance;
+      if (!appliance?.current) return;
+      const running = this._runningKey(appliance);
+      this._runningNames[running] = name;
+      key = `running:${running}`;
+      focus = "running-name";
+    } else {
+      const cycle = this._cycleOf(select);
+      if (!cycle) return;
+      this._names[cycle.cycle_id] = name;
+      key = cycle.cycle_id;
+      focus = `name-${cycle.cycle_id}`;
+    }
+    if (isNew) this._custom.add(key);
+    else this._custom.delete(key);
+    // los van de keuzelijst, anders wacht het tekenen tot hij de focus kwijt is
+    select.blur();
+    this._render();
+    if (isNew) this.shadowRoot.querySelector(`[data-focus="${CSS.escape(focus)}"]`)?.focus();
   }
 
   /** Naam aanpassen of programma verwijderen, onder de lijst met programma's. */
@@ -780,10 +856,7 @@ class EnergieAdviseurPanel extends HTMLElement {
         ${adjusting ? this._adjustChart(cycle) : this._chart(cycle)}
         <p class="readout muted" data-readout>${esc(adjusting ? t.adjustHint : t.chartHint)}</p>
         <div class="row">
-          <label class="grow">${esc(t.name)}
-            <input type="text" list="ea-programs" maxlength="60" autocomplete="off" placeholder="${esc(t.namePlaceholder)}"
-              value="${esc(value)}" data-field="name" data-focus="name-${esc(cycle.cycle_id)}">
-          </label>
+          ${this._programField(this._appliance, value, { field: "name", focus: `name-${cycle.cycle_id}`, custom: this._custom.has(cycle.cycle_id) })}
           <button class="primary" data-action="save" ${canSave ? "" : "disabled"}>${esc(t.save)}</button>
           <button class="toggle" data-action="adjust" aria-expanded="${adjusting ? "true" : "false"}" data-focus="adjust-${esc(cycle.cycle_id)}">${esc(t.adjust)}</button>
           <button data-action="restore" title="${esc(cycle.has_original ? t.undoTitle : t.refetchTitle)}" ${this._busy ? "disabled" : ""}>${esc(cycle.has_original ? t.undo : t.refetch)}</button>
@@ -1126,6 +1199,7 @@ class EnergieAdviseurPanel extends HTMLElement {
         () => this._service("label_running_cycle", { appliance: appliance.entry_id, program: name }),
         () => {
           delete this._runningNames[key];
+          this._custom.delete(`running:${key}`);
           return this._t.runningSaved(shown);
         }
       );
@@ -1135,6 +1209,7 @@ class EnergieAdviseurPanel extends HTMLElement {
         () => this._service("label_running_cycle", { appliance: appliance.entry_id, program: "" }),
         () => {
           delete this._runningNames[key];
+          this._custom.delete(`running:${key}`);
           return this._t.runningCleared;
         }
       );
@@ -1157,6 +1232,7 @@ class EnergieAdviseurPanel extends HTMLElement {
         () => this._service("label_cycle", { appliance: appliance.entry_id, program: name, cycle_id: cycle.cycle_id }),
         () => {
           delete this._names[cycle.cycle_id];
+          this._custom.delete(cycle.cycle_id);
           return this._t.saved(name);
         }
       );
@@ -1181,6 +1257,7 @@ class EnergieAdviseurPanel extends HTMLElement {
         () => {
           this._confirm = null;
           delete this._names[cycle.cycle_id];
+          this._custom.delete(cycle.cycle_id);
           if (this._marker && this._marker.cycleId === cycle.cycle_id) this._marker = null;
           return this._t.removed;
         }
@@ -1208,6 +1285,7 @@ class EnergieAdviseurPanel extends HTMLElement {
           // met een ander begin krijgt de cyclus een ander id
           this._adjust = null;
           delete this._names[cycle.cycle_id];
+          this._custom.delete(cycle.cycle_id);
           return this._t.adjusted;
         }
       );
@@ -1267,7 +1345,9 @@ class EnergieAdviseurPanel extends HTMLElement {
   _onChange(event) {
     const field = event.target.dataset?.field;
     const cycle = this._cycleOf(event.target);
-    if (field === "keep") {
+    if (field === "name-pick" || field === "running-name-pick") {
+      this._onPick(event.target);
+    } else if (field === "keep") {
       this._keep = event.target.value;
       this._render();
     } else if ((field === "adjust-start" || field === "adjust-end") && cycle && this._adjust) {
