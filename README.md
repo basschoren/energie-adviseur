@@ -56,6 +56,24 @@ Bezet of vrij wordt gelezen uit Google Agenda. Bij andere agenda's (bijvoorbeeld
 ### Aftrek op teruglevering
 Dit is hoeveel een teruggeleverde kWh minder oplevert dan een afgenomen kWh kost. Bij 0 maakt het voor de kosten niet uit of je eigen zonnestroom gebruikt, en telt de zonne-forecast dus niet mee. Vul hier het werkelijke verschil in zodra je voor teruglevering minder krijgt dan je voor afname betaalt.
 
+### Zonne-overschot: wat een apparaat ervan kan gebruiken
+Per blok van 5 minuten is het overschot de opwek min het verbruik van het huis. Een apparaat gebruikt daarvan wat het op dat moment nodig heeft; de rest komt van het net. Een vaatwasser die 1800 W trekt bij 1200 W overschot rekent dus 1200 W tegen de prijs van zonnestroom en 600 W tegen de netprijs. Het attribuut `waarvan_zonnestroom_kwh` van **Beste starttijd** laat zien hoeveel van de beurt uit eigen opwek komt.
+
+**Andere apparaten tellen mee.** Overschot dat een ander apparaat al gebruikt, is er niet nog een keer:
+
+- een beurt die nu draait telt mee met het resterende verloop van zijn programma;
+- de beurten uit de **Wasplanning** tellen mee voor het advies van de andere apparaten;
+- de wasplanning zelf houdt rekening met beurten van andere apparaten die al draaien.
+
+Een advies telt niet mee als geplande beurt. Dat is er altijd, ook als je het apparaat vandaag niet gebruikt; anders zouden apparaten elkaar ontwijken voor beurten die nooit komen.
+
+**Metingen van nu (optioneel).** De planning rekent met de zonne-forecast en het ingestelde basisverbruik. Kies je bij de algemene instellingen ook de sensoren hieronder, dan sturen de metingen de eerstkomende uren bij:
+
+- **Sensor met de opwek van nu**: het vermogen van je omvormer. Wekt je dak nu meer of minder op dan verwacht, dan schuift de verwachting mee.
+- **Sensor met het netvermogen van nu**: het vermogen op de slimme meter, positief bij afname en negatief bij teruglevering. Opwek plus netvermogen is wat het huis nu verbruikt; daar gaan de apparaten die apart worden gepland weer af.
+
+De metingen worden over ongeveer 10 minuten gemiddeld, zodat een wolk het advies niet laat omslaan. Ze wegen nu volledig mee en steeds minder naarmate het verder vooruit is; na 3 uur gelden weer alleen de forecast en het basisverbruik. Is een sensor niet beschikbaar (een omvormer die 's nachts uit staat), dan valt de planning daarvoor terug op de forecast. De attributen `opwek_gemeten_w` en `huisverbruik_gemeten_w` van **Huidige stroomprijs** tonen waarmee wordt gerekend.
+
 ## Programma's leren
 
 1. Draai een programma. Na afloop verschijnt de melding *onbekend programma*.

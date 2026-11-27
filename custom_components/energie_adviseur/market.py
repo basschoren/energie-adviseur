@@ -13,25 +13,29 @@ from homeassistant.util import dt as dt_util
 from .const import (
     CONF_BASE_LOAD,
     CONF_EXPORT_DEDUCTION,
+    CONF_GRID_POWER_ENTITY,
     CONF_KIND,
     CONF_PRESENCE_CALENDARS,
     CONF_PRICE_ENTITY,
     CONF_PRICE_MULTIPLIER,
     CONF_SOLAR_ENTITY,
+    CONF_SOLAR_POWER_ENTITY,
     CONF_USE_ENERGY_DASHBOARD,
     DOMAIN,
     KIND_HUB,
     UNAVAILABLE,
 )
 from .core import SLOT_S
+from .core.live import Average
 from .core.presence import Period, is_away, merge
 from .core.price import SOLAR_KEYS, Interval, parse_intervals, price_scale, to_epoch
-from .core.scheduler import Grid, build_grid
+from .core.scheduler import Grid, add_loads, build_grid
 
 _LOGGER = logging.getLogger(__name__)
 SOLAR_REFRESH_S = 1800
 PRESENCE_REFRESH_S = 300
 PRESENCE_DAYS = 3  # zo ver vooruit worden de agenda's gelezen
+LIVE_SAMPLE_S = 30  # hooguit zo vaak worden de metingen van nu gelezen
 
 
 def parse_time(value: Any, default: dtime) -> dtime:
@@ -51,6 +55,10 @@ class Market:
         self.solar_source = "geen"
         self._away: list[Period] = []
         self._away_ts = 0.0
+        # metingen van nu, gemiddeld over ongeveer 10 minuten: een wolk mag het advies niet laten omslaan
+        self._solar_now = Average()
+        self._house_now = Average()
+        self._live_ts = 0.0
 
     @property
     def hub(self) -> dict[str, Any] | None:
@@ -199,17 +207,81 @@ class Market:
         step = min(steps) if steps else 3600.0
         return [(s, s + step, totals[s] * 3600.0 / step) for s in starts]
 
+    # ------------------------------------------------------------ metingen van nu
+
+    def _managers(self) -> list[Any]:
+        """De apparaten die worden gepland (alles met een cyclusdetector)."""
+        out = []
+        for entry in self.hass.config_entries.async_entries(DOMAIN):
+            manager = getattr(entry, "runtime_data", None)
+            if hasattr(manager, "expected_loads"):
+                out.append(manager)
+        return out
+
+    def _watts(self, entity_id: str | None) -> float | None:
+        state = self.hass.states.get(entity_id) if entity_id else None
+        if state is None or state.state in UNAVAILABLE:
+            return None
+        try:
+            value = float(state.state)
+        except ValueError:
+            return None
+        return value * (1000.0 if state.attributes.get("unit_of_measurement") == "kW" else 1.0)
+
+    def _sample(self, now: float) -> None:
+        """Lees de opwek en het verbruik van het huis van dit moment."""
+        if now - self._live_ts < LIVE_SAMPLE_S:
+            return
+        self._live_ts = now
+        hub = self.hub or {}
+        solar = self._watts(hub.get(CONF_SOLAR_POWER_ENTITY))
+        net = self._watts(hub.get(CONF_GRID_POWER_ENTITY))  # afname positief, teruglevering negatief
+        if solar is not None:
+            self._solar_now.update(now, max(0.0, solar))
+        if solar is not None and net is not None:
+            # wat het huis verbruikt naast de apparaten die apart worden gepland: die tellen met hun eigen profiel mee
+            planned = sum(m.detector.last_power for m in self._managers() if m.detector.running)
+            self._house_now.update(now, max(0.0, solar + net - planned))
+
+    def live(self) -> dict[str, float | None]:
+        """De metingen waarmee nu wordt gerekend (W); None als er geen recente meting is."""
+        now = time.time()
+        self._sample(now)
+        solar, house = self._solar_now.value(now), self._house_now.value(now)
+        return {
+            "opwek_gemeten_w": None if solar is None else round(solar),
+            "huisverbruik_gemeten_w": None if house is None else round(house),
+        }
+
+    def other_load(self, grid: Grid, exclude: str | None = None, skip_plan_of: str | None = None) -> list[float]:
+        """Verbruik (W) per blok van apparaten die al draaien of in een wasplanning staan.
+
+        `exclude` is het apparaat waarvoor het advies wordt berekend: zijn eigen beurten tellen niet mee.
+        `skip_plan_of` is de wasmachine waarvan de wasplanning nu opnieuw wordt gemaakt.
+        """
+        loads: list[list[float]] = []
+        for manager in self._managers():
+            own_plan = manager.entry.entry_id != skip_plan_of
+            for entry_id, load in manager.expected_loads(grid, include_plan=own_plan):
+                if entry_id != exclude:
+                    loads.append(load)
+        return add_loads(len(grid), *loads)
+
     def grid(self) -> Grid | None:
         hub = self.hub
         prices = self.prices()
         if not hub or not prices:
             return None
+        now = time.time()
+        self._sample(now)
         grid = build_grid(
-            time.time(),
+            now,
             prices,
             self._solar,
             float(hub.get(CONF_BASE_LOAD) or 0.0),
             float(hub.get(CONF_EXPORT_DEDUCTION) or 0.0),
+            measured_solar_w=self._solar_now.value(now),
+            measured_house_w=self._house_now.value(now),
         )
         return grid if len(grid) else None
 

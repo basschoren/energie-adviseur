@@ -8,6 +8,9 @@ from . import SLOT_S
 from .price import Interval
 
 STEP = 3  # kandidaat-starttijden per kwartier (3 blokken van 5 minuten)
+LIVE_HORIZON_S = 3 * 3600.0  # zo lang werkt een meting van nu door in de verwachting
+LIVE_MIN_FORECAST_W = 100.0  # onder deze verwachting wordt het verschil opgeteld in plaats van geschaald
+LIVE_MAX_RATIO = 3.0  # de meting groeit verderop hooguit zoveel keer mee met een stijgende verwachting
 
 
 @dataclass
@@ -50,9 +53,20 @@ def build_grid(
     solar_w: list[Interval] | None = None,
     base_load_w: float = 0.0,
     export_deduction: float = 0.0,
+    measured_solar_w: float | None = None,
+    measured_house_w: float | None = None,
+    horizon_s: float = LIVE_HORIZON_S,
 ) -> Grid:
-    """Raster vanaf het eerstvolgende blok tot het einde van de bekende prijzen."""
+    """Raster vanaf het eerstvolgende blok tot het einde van de bekende prijzen.
+
+    Het overschot per blok is de verwachte opwek min het verbruik van het huis. Met
+    `measured_solar_w` (opwek nu) en `measured_house_w` (verbruik van het huis nu, zonder
+    de apparaten die apart worden gepland) telt voor de eerstkomende blokken de meting:
+    die weegt nu volledig mee en neemt lineair af tot nul na `horizon_s`. Daarna gelden
+    weer de verwachting en het ingestelde basisverbruik.
+    """
     t0 = -(-now // SLOT_S) * SLOT_S
+    forecast_now = (_lookup(solar_w, now) if solar_w else None) or 0.0
     price: list[float] = []
     surplus: list[float] = []
     ts = t0
@@ -61,10 +75,42 @@ def build_grid(
         if p is None:
             break
         price.append(p)
-        s = _lookup(solar_w, ts) if solar_w else None
-        surplus.append(max(0.0, (s or 0.0) - base_load_w))
+        solar = (_lookup(solar_w, ts) if solar_w else None) or 0.0
+        house = base_load_w
+        weight = max(0.0, 1.0 - (ts - now) / horizon_s) if horizon_s > 0 else 0.0
+        if weight and measured_solar_w is not None:
+            if forecast_now >= LIVE_MIN_FORECAST_W:
+                # nu geldt de meting; verderop volgt die de vorm van de verwachting (stijgend of dalend)
+                shape = min(solar / forecast_now, LIVE_MAX_RATIO)
+                solar += weight * (max(measured_solar_w, 0.0) * shape - solar)
+            else:
+                solar = max(0.0, solar + weight * (measured_solar_w - forecast_now))
+        if weight and measured_house_w is not None:
+            house = max(0.0, house + weight * (measured_house_w - house))
+        surplus.append(max(0.0, solar - house))
         ts += SLOT_S
     return Grid(t0, price, surplus, export_deduction)
+
+
+def load_on_grid(grid: Grid, start: float, profile: list[float]) -> list[float]:
+    """Verbruik (W) per blok van een beurt die op `start` (epoch) begint of al begonnen is."""
+    out = [0.0] * len(grid)
+    for idx in range(len(grid)):
+        k = int((grid.time(idx) - start) // SLOT_S)
+        if 0 <= k < len(profile):
+            out[idx] = profile[k]
+        elif k >= len(profile):
+            break
+    return out
+
+
+def add_loads(size: int, *loads: list[float] | None) -> list[float]:
+    """Tel verbruik per blok op tot een lijst van `size` blokken."""
+    out = [0.0] * size
+    for load in loads:
+        for idx, w in enumerate((load or [])[:size]):
+            out[idx] += w
+    return out
 
 
 def day_mask(grid: Grid, start: float, end: float, allowed: list[bool] | None = None) -> list[bool]:
@@ -88,6 +134,15 @@ def _added_cost(grid: Grid, base: list[float], start: int, profile: list[float])
     return total
 
 
+def _added_solar_kwh(grid: Grid, base: list[float], start: int, profile: list[float]) -> float:
+    """Hoeveel van het profiel uit zonne-overschot komt dat niet al door `base` wordt gebruikt."""
+    total = 0.0
+    for i, w in enumerate(profile):
+        idx = start + i
+        total += min(base[idx] + w, grid.surplus[idx]) - min(base[idx], grid.surplus[idx])
+    return total * SLOT_S / 3_600_000.0
+
+
 @dataclass
 class Advice:
     start: float
@@ -95,6 +150,7 @@ class Advice:
     cost: float
     cost_now: float | None  # kosten bij direct starten; None als dat niet past
     energy_kwh: float
+    solar_kwh: float = 0.0  # deel van het verbruik dat uit eigen zonne-overschot komt
 
     @property
     def saving(self) -> float | None:
@@ -106,15 +162,20 @@ def best_start(
     profile: list[float],
     allowed: list[bool] | None = None,
     deadline: float | None = None,
+    base: list[float] | None = None,
 ) -> Advice | None:
-    """Goedkoopste start voor één apparaat. allowed[i]: mag in blok i starten."""
+    """Goedkoopste start voor één apparaat. allowed[i]: mag in blok i starten.
+
+    `base` is het verbruik (W) per blok van andere apparaten die al draaien of gepland
+    staan: zonne-overschot dat zij gebruiken, is er voor dit apparaat niet meer.
+    """
     n = len(profile)
     last = len(grid) - n
     if deadline is not None:
         last = min(last, int((deadline - grid.t0) // SLOT_S) - n)
     if n == 0 or last < 0:
         return None
-    base = [0.0] * len(grid)
+    base = add_loads(len(grid), base)
     cost_now = _added_cost(grid, base, 0, profile)
     best: tuple[float, int] | None = None
     for idx in range(0, last + 1):
@@ -132,6 +193,7 @@ def best_start(
         cost=round(cost, 4),
         cost_now=round(cost_now, 4),
         energy_kwh=round(sum(profile) * SLOT_S / 3_600_000.0, 3),
+        solar_kwh=round(_added_solar_kwh(grid, base, idx, profile), 3),
     )
 
 
@@ -197,6 +259,7 @@ def plan_chain(
     max_wait_s: float = 3 * 3600.0,
     pending_dry_washed_at: list[float | None] | None = None,
     day_ends: list[float] | None = None,
+    base: list[float] | None = None,
 ) -> ChainPlan | None:
     """Plan `loads` wasjes met elk een droogbeurt, plus `pending_dry` losse droogbeurten.
 
@@ -212,8 +275,12 @@ def plan_chain(
     met een profiel per beurt: per wasje, en voor de droger eerst de losse
     droogbeurten en dan per wasje. `pending_dry_ready_at` geldt voor de laatste losse
     droogbeurt: de was die nu nog draait.
+
+    `base` is het verbruik (W) per blok van apparaten buiten dit plan die al draaien of
+    gepland staan; zonne-overschot dat zij gebruiken, telt voor dit plan niet mee.
     """
     size = len(grid)
+    other = add_loads(size, base)
     gap = int(-(-gap_s // SLOT_S))
     max_wait = int(max_wait_s // SLOT_S)
     w_free = grid.index(washer_free_at) if washer_free_at else 0
@@ -320,7 +387,7 @@ def plan_chain(
         return True
 
     def load_without(skip: Job) -> list[float]:
-        base = [0.0] * size
+        base = list(other)
         for job in jobs:
             if job is not skip:
                 for i, w in enumerate(job.profile):
@@ -328,7 +395,7 @@ def plan_chain(
         return base
 
     def total(assign: bool = False) -> float:
-        base = [0.0] * size
+        base = list(other)
         cost = 0.0
         for job in jobs:
             added = _added_cost(grid, base, job.start, job.profile)

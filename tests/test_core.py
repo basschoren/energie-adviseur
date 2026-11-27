@@ -22,7 +22,8 @@ from core.heating_model import DayRecord, cop_at, fit, hourly_advice, implied_co
 from core.presence import is_away, merge  # noqa: E402
 from core.price import parse_intervals, price_scale  # noqa: E402
 from core.program_matcher import Program, match, rebuild  # noqa: E402
-from core.scheduler import best_start, build_grid, day_mask, plan_chain  # noqa: E402
+from core.live import Average  # noqa: E402
+from core.scheduler import best_start, build_grid, day_mask, load_on_grid, plan_chain  # noqa: E402
 
 T0 = 1_800_000_000.0 - (1_800_000_000 % 3600)  # heel uur
 
@@ -229,6 +230,114 @@ class SchedulerTest(unittest.TestCase):
         late = best_start(grid, profile, day_mask(grid, T0 + 5 * 3600, T0 + 6 * 3600))
         self.assertEqual(late.start, T0 + 5 * 3600 + 45 * 60)
         self.assertAlmostEqual(late.cost, 0.45, places=3)
+
+
+class SolarShareTest(unittest.TestCase):
+    """Wat een apparaat van het zonne-overschot kan gebruiken: metingen van nu en andere apparaten."""
+
+    def test_measured_surplus_covers_part_of_the_load(self):
+        # 1500 W opwek, 330 W huis: van de 1800 W van de vaatwasser komt 1170 W van het dak
+        grid = build_grid(T0, hourly([0.50] * 4), None, 300, 0.129, measured_solar_w=1500, measured_house_w=330)
+        self.assertAlmostEqual(grid.surplus[0], 1170.0, places=3)
+        advice = best_start(grid, [1800.0] * 3)  # een kwartier verwarmen
+        self.assertEqual(advice.start, T0)
+        self.assertAlmostEqual(advice.energy_kwh, 0.45, places=3)
+        self.assertAlmostEqual(advice.solar_kwh, 0.282, places=3)
+        # 0,45 kWh tegen de netprijs, min de aftrek over het deel van het dak
+        self.assertAlmostEqual(advice.cost, 0.45 * 0.50 - 0.129 * 0.2823, places=3)
+
+    def test_without_deduction_solar_share_does_not_change_the_cost(self):
+        grid = build_grid(T0, hourly([0.50] * 4), None, 300, 0.0, measured_solar_w=1500, measured_house_w=330)
+        advice = best_start(grid, [1800.0] * 3)
+        self.assertAlmostEqual(advice.cost, 0.225, places=4)
+        self.assertGreater(advice.solar_kwh, 0.25)
+
+    def test_measurement_scales_forecast_and_fades_out(self):
+        solar = hourly([1000.0] * 8)
+        plain = build_grid(T0, hourly([0.30] * 8), solar, 300)
+        self.assertAlmostEqual(plain.surplus[0], 700.0)
+        live = build_grid(T0, hourly([0.30] * 8), solar, 300, measured_solar_w=1500)
+        self.assertAlmostEqual(live.surplus[0], 1200.0)  # nu: de meting
+        self.assertAlmostEqual(live.surplus[18], 950.0)  # over anderhalf uur: halverwege
+        self.assertAlmostEqual(live.surplus[36], 700.0)  # na drie uur: de verwachting
+        self.assertAlmostEqual(live.surplus[60], 700.0)
+
+    def test_measurement_is_capped_and_handles_missing_forecast(self):
+        prices = hourly([0.30] * 4)
+        # de verwachting zat er ver naast (561 W tegen 1500 W gemeten): nu telt de meting, min het huis
+        off = build_grid(T0, prices, hourly([561.0] * 4), 300, measured_solar_w=1500, measured_house_w=330)
+        self.assertAlmostEqual(off.surplus[0], 1170.0)
+        # de verwachting stijgt van 100 naar 1000 W: de meting groeit hooguit drie keer mee
+        rising = build_grid(T0, prices, hourly([100.0, 1000.0, 1000.0, 1000.0]), 0, measured_solar_w=200)
+        self.assertAlmostEqual(rising.surplus[0], 200.0)
+        weight = 1 - 3600 / (3 * 3600)
+        self.assertAlmostEqual(rising.surplus[12], 1000.0 + weight * (600.0 - 1000.0))
+        # geen (of bijna geen) verwachting: het verschil wordt opgeteld
+        added = build_grid(T0, prices, hourly([50.0] * 4), 0, measured_solar_w=450)
+        self.assertAlmostEqual(added.surplus[0], 450.0)
+        # bewolkt: minder dan verwacht
+        cloudy = build_grid(T0, prices, hourly([1000.0] * 4), 300, measured_solar_w=400)
+        self.assertAlmostEqual(cloudy.surplus[0], 100.0)
+
+    def test_measured_house_replaces_base_load_nearby(self):
+        solar = hourly([2000.0] * 8)
+        grid = build_grid(T0, hourly([0.30] * 8), solar, 300, measured_house_w=900)
+        self.assertAlmostEqual(grid.surplus[0], 1100.0)
+        self.assertAlmostEqual(grid.surplus[36], 1700.0)
+
+    def test_load_on_grid_places_running_and_future_cycles(self):
+        grid = build_grid(T0, hourly([0.30] * 2))
+        running = load_on_grid(grid, T0 - 600, [1.0, 2.0, 3.0, 4.0])  # al tien minuten bezig
+        self.assertEqual(running[:3], [3.0, 4.0, 0.0])
+        future = load_on_grid(grid, T0 + 900, [5.0, 6.0])
+        self.assertEqual(future[2:6], [0.0, 5.0, 6.0, 0.0])
+        self.assertEqual(load_on_grid(grid, T0 - 3600, [9.0] * 6), [0.0] * len(grid))  # allang klaar
+
+    def test_other_appliance_uses_the_surplus_first(self):
+        prices = hourly([0.25] * 6)
+        solar = hourly([0, 0, 3000, 3000, 0, 0])
+        grid = build_grid(T0, prices, solar, 0, export_deduction=0.15)
+        profile = [2000.0] * 12  # een uur, 2 kW
+        alone = best_start(grid, profile)
+        self.assertEqual(alone.start, T0 + 2 * 3600)
+        self.assertAlmostEqual(alone.solar_kwh, 2.0, places=3)
+        # de wasmachine staat gepland in het eerste zonnige uur: daar blijft nog 1 kW over
+        washer = load_on_grid(grid, T0 + 2 * 3600, [2000.0] * 12)
+        shared = best_start(grid, profile, base=washer)
+        self.assertEqual(shared.start, T0 + 3 * 3600)
+        self.assertAlmostEqual(shared.solar_kwh, 2.0, places=3)
+        # is het overschot beide uren al grotendeels vergeven, dan komt nog maar de helft van het dak
+        busy = load_on_grid(grid, T0 + 2 * 3600, [2000.0] * 24)
+        rest = best_start(grid, profile, base=busy)
+        self.assertAlmostEqual(rest.solar_kwh, 1.0, places=3)
+        self.assertAlmostEqual(rest.cost, 2.0 * 0.25 - 1.0 * 0.15, places=3)
+        self.assertAlmostEqual(rest.cost_now, 2.0 * 0.25, places=3)
+
+    def test_chain_avoids_surplus_another_appliance_already_uses(self):
+        prices = hourly([0.25] * 6 + [0.26] * 4)
+        solar = hourly([0, 2500, 2500, 0, 0, 0, 2500, 2500, 0, 0])
+        grid = build_grid(T0, prices, solar, 0, export_deduction=0.15)
+        wash = dry = [2000.0] * 9  # drie kwartier
+        free = plan_chain(grid, wash, dry, 1)
+        self.assertLess(free.as_list()[0]["start"], T0 + 3 * 3600)
+        # een ander apparaat draait van uur 1 tot 3 en gebruikt het overschot daar
+        other = load_on_grid(grid, T0 + 3600, [2500.0] * 24)
+        shared = plan_chain(grid, wash, dry, 1, base=other)
+        self.assertGreaterEqual(shared.as_list()[0]["start"], T0 + 6 * 3600 - 45 * 60)
+        self.assertLess(shared.cost, free.cost + 0.05)
+        self.assertGreater(plan_chain(grid, wash, dry, 1, base=load_on_grid(grid, T0, [2500.0] * 120)).cost, shared.cost)
+
+    def test_average_smooths_and_expires(self):
+        avg = Average(tau_s=600, max_age_s=900)
+        self.assertIsNone(avg.value(0))
+        avg.update(0, 1000.0)
+        avg.update(600, 2000.0)
+        self.assertAlmostEqual(avg.value(600), 1632.1, places=1)
+        avg.update(700, None)  # sensor even weg: het gemiddelde blijft staan
+        self.assertAlmostEqual(avg.value(700), 1632.1, places=1)
+        self.assertIsNone(avg.value(600 + 901))
+        avg.update(5000, 300.0)  # na een lange stilte begint het opnieuw
+        self.assertEqual(avg.value(5000), 300.0)
 
 
 class ChainTest(unittest.TestCase):
