@@ -55,7 +55,7 @@ from .core.cycle_detector import (
     trim_cycle,
 )
 from .core.program_matcher import Program, match, rebuild
-from .core.scheduler import Advice, ChainPlan, best_start, day_mask, plan_chain
+from .core.scheduler import Advice, ChainPlan, Grid, best_start, day_mask, load_on_grid, plan_chain
 from .market import get_market, parse_time
 
 _LOGGER = logging.getLogger(__name__)
@@ -739,13 +739,50 @@ class ApplianceManager:
             self.advice = self.advice_today = self.advice_tomorrow = None
             return
         allowed = market.allowed(grid, *self.window)
-        self.advice = best_start(grid, program.profile, allowed)
-        self.advice_today = best_start(grid, program.profile, day_mask(grid, *market.day_bounds(0), allowed))
+        # wat andere apparaten al aan zonne-overschot gebruiken, is er voor dit apparaat niet meer
+        base = market.other_load(grid, exclude=self.entry.entry_id)
+        self.advice = best_start(grid, program.profile, allowed, base=base)
+        self.advice_today = best_start(grid, program.profile, day_mask(grid, *market.day_bounds(0), allowed), base=base)
         self.advice_tomorrow = (
-            best_start(grid, program.profile, day_mask(grid, *market.day_bounds(1), allowed))
+            best_start(grid, program.profile, day_mask(grid, *market.day_bounds(1), allowed), base=base)
             if market.tomorrow_known(grid)
             else None
         )
+
+    def _running_program(self) -> Program | None:
+        """Het programma dat nu vermoedelijk draait: de naam die de beurt al kreeg, anders de ronde of de keuze."""
+        named = self.program_by_name(self.running_program_name)
+        if named is not None and named.count:
+            return named
+        if self.round_one_running and self.wash_rounds:
+            return self._wash_program(self.wash_rounds[0])
+        return self.active_program
+
+    def expected_loads(self, grid: Grid, include_plan: bool = True) -> list[tuple[str, list[float]]]:
+        """Verwacht verbruik per blok, per apparaat dat het trekt: de beurt die nu draait en de wasplanning.
+
+        Een advies telt niet mee: dat is er altijd, ook als je het apparaat vandaag niet gebruikt.
+        """
+        out: list[tuple[str, list[float]]] = []
+        detector = self.detector
+        if detector.running and detector.start is not None:
+            program = self._running_program()
+            if program is not None:
+                # pauzes schuiven het verloop op
+                out.append((self.entry.entry_id, load_on_grid(grid, detector.start + detector.paused_s, program.profile)))
+        plan = self.plan if include_plan and self.is_washer else None
+        if plan is not None:
+            dryer = self.dryer
+            for job in plan.jobs:
+                machine = self if job.kind == "wash" else dryer
+                if machine is None:
+                    continue
+                start = plan.t0 + job.start * SLOT_S
+                busy = machine._busy_until(machine._running_program()) if machine.detector.running else None
+                if busy is not None and start < busy:
+                    continue  # die beurt draait al, of het plan loopt achter: de lopende beurt telt hierboven mee
+                out.append((machine.entry.entry_id, load_on_grid(grid, start, job.profile)))
+        return out
 
     @property
     def tomorrow_saving(self) -> float | None:
@@ -824,6 +861,8 @@ class ApplianceManager:
             plan, unplanned = None, 0
             if dryer is not None and grid is not None and (washes or loose) and all(washes + dries + loose):
                 allowed = market.allowed(grid, *self.window)
+                # beurten die nu draaien (ook van andere apparaten) gebruiken al een deel van het zonne-overschot
+                base = market.other_load(grid, skip_plan_of=self.entry.entry_id)
                 # de droger is bezet tot het programma dat nu draait klaar is
                 dryer_free = dryer._busy_until(drying_program or (loose + dries)[0])
                 # past niet alles binnen de bekende prijzen, dan vervallen de laatste rondes uit het plan
@@ -845,6 +884,7 @@ class ApplianceManager:
                             # drogen hoort bij de was: op dezelfde dag en hooguit 3 uur erna
                             pending_dry_washed_at=washed_at,
                             day_ends=[market.day_bounds(day)[1] for day in range(-1, 3)],
+                            base=base,
                         )
                     )
                     if plan is not None:

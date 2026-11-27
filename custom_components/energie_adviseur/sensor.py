@@ -67,6 +67,7 @@ def _advice_attrs(m: ApplianceManager) -> dict[str, Any]:
         "kosten_bij_nu_starten": advice.cost_now,
         "besparing": advice.saving,
         "verbruik_kwh": advice.energy_kwh,
+        "waarvan_zonnestroom_kwh": advice.solar_kwh,
     }
 
 
@@ -79,6 +80,7 @@ def _day_attrs(m: ApplianceManager, advice: Advice | None) -> dict[str, Any]:
         "klaar_om": _ts(advice.end).isoformat(),
         "kosten": advice.cost,
         "verbruik_kwh": advice.energy_kwh,
+        "waarvan_zonnestroom_kwh": advice.solar_kwh,
     }
     if advice is m.advice_today:
         attrs["kosten_bij_nu_starten"] = advice.cost_now
@@ -239,6 +241,7 @@ HUB: tuple[EADescription, ...] = (
             "prijzen_bekend_tot": _ts(max((e for _, e, _ in get_market(m.hass).prices()), default=None)),
             "aantal_prijsblokken": len(get_market(m.hass).prices()),
             "zonne_forecast": get_market(m.hass).solar_source,
+            **get_market(m.hass).live(),
         },
     ),
 )
